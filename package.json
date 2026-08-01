@@ -1,0 +1,14 @@
+{
+  "name": "monopoly-arena",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/engine",
+    "packages/web"
+  ],
+  "scripts": {
+    "test": "npm run test --workspace=@monopoly-arena/engine",
+    "dev": "npm run dev --workspace=@monopoly-arena/web",
+    "build": "npm run build --workspace=@monopoly-arena/engine && npm run build --workspace=@monopoly-arena/web"
+  }
+}

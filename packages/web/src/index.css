@@ -1,0 +1,147 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #1b1b1b;
+  color: #eee;
+}
+
+.app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px 24px 40px;
+}
+
+header h1 {
+  margin: 0 0 2px;
+}
+
+.subtitle {
+  margin: 0 0 16px;
+  color: #aaa;
+}
+
+.layout {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.board-column {
+  flex: 1 1 500px;
+}
+
+.side-column {
+  flex: 1 1 300px;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.controls button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #555;
+  background: #2a9d8f;
+  color: #fff;
+  cursor: pointer;
+}
+
+.controls button.secondary {
+  background: #444;
+}
+
+.controls button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.bot-select {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.bot-select select {
+  margin-left: 6px;
+}
+
+.player-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.player-card {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: #262626;
+  border-radius: 8px;
+  padding: 8px 10px;
+  border: 2px solid transparent;
+}
+
+.player-card.current {
+  border-color: #f4a261;
+}
+
+.player-card.bankrupt {
+  opacity: 0.5;
+}
+
+.player-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.player-name {
+  font-weight: 600;
+}
+
+.player-cash {
+  font-size: 1.1em;
+}
+
+.player-meta {
+  font-size: 0.8em;
+  color: #999;
+}
+
+.winner-banner {
+  background: #2e7d32;
+  padding: 10px;
+  border-radius: 8px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.log-feed {
+  background: #111;
+  border-radius: 8px;
+  padding: 10px;
+  height: 400px;
+  overflow-y: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8em;
+  line-height: 1.4;
+}
+
+.log-entry {
+  color: #ccc;
+}

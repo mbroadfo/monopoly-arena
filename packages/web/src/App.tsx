@@ -10,14 +10,19 @@ export function App() {
 
   return (
     <div className="app">
-      <header>
-        <h1>Monopoly Arena</h1>
-        <p className="subtitle">Watch AI bots play Monopoly against each other.</p>
-      </header>
-
       <div className="layout">
         <div className="board-column">
           <Board state={state} />
+        </div>
+
+        <div className="side-column">
+          <header className="side-header">
+            <h1>Monopoly Arena</h1>
+            <p className="subtitle">Watch AI bots play Monopoly against each other.</p>
+          </header>
+
+          <PlayerPanel state={state} />
+
           <div className="controls">
             <button onClick={step} disabled={state.winnerId !== null}>
               Step
@@ -62,10 +67,7 @@ export function App() {
               </label>
             ))}
           </div>
-        </div>
 
-        <div className="side-column">
-          <PlayerPanel state={state} />
           <LogFeed state={state} />
         </div>
       </div>

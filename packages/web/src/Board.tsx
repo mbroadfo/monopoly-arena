@@ -1,126 +1,193 @@
-import { useEffect, useRef } from "react";
-import type { ColorGroup, GameState } from "@monopoly-arena/engine";
-import { GRID_SIZE, GROUP_COLORS, PLAYER_COLORS, isCorner, spaceToGrid } from "./boardLayout";
+import { ArrowBigLeft, Droplets, HelpCircle, Package, ParkingCircle, Siren, TrainFront, Trophy, Zap } from "lucide-react";
+import type { GameState, Space } from "@monopoly-arena/engine";
+import { GROUP_COLORS, PLAYER_COLORS, isCorner, spaceToGrid } from "./boardLayout";
 
-const CANVAS_SIZE = 770;
-const CELL = CANVAS_SIZE / GRID_SIZE;
+/**
+ * Rotation so tile text/icons face outward toward the player sitting at that edge, with the
+ * colored group bar always landing on the side nearest the board's center (matching a real board).
+ * Only used for non-corner tiles; corners get their own fixed per-corner treatment.
+ */
+function edgeRotation(index: number): number {
+  const { col, row } = spaceToGrid(index);
+  if (row === 0) return 180;
+  if (col === 0) return 90;
+  if (col === 10) return -90;
+  return 0;
+}
 
-function hasGroup(space: GameState["spaces"][number]): space is GameState["spaces"][number] & { group: ColorGroup } {
-  return "group" in space;
+function TileIcon({ space, size = 20 }: { space: Space; size?: number }) {
+  switch (space.type) {
+    case "chance":
+      return <HelpCircle size={size} color="#e65100" strokeWidth={2.5} />;
+    case "community-chest":
+      return <Package size={size} color="#1565c0" strokeWidth={2} />;
+    case "railroad":
+      return <TrainFront size={size} color="#333" strokeWidth={2} />;
+    case "utility":
+      return space.name.includes("Electric") ? (
+        <Zap size={size} color="#f9a825" fill="#fff59d" strokeWidth={2} />
+      ) : (
+        <Droplets size={size} color="#0288d1" fill="#81d4fa" strokeWidth={2} />
+      );
+    case "tax":
+      return <span className="tax-icon">$</span>;
+    default:
+      return null;
+  }
+}
+
+/** Corners get their own fixed orientation rather than the generic edge rotation. */
+function CornerTile({ space }: { space: Space }) {
+  switch (space.type) {
+    case "go":
+      // Bottom-right corner: reads normally, facing the bottom edge, arrow pointing back along the bottom row.
+      return (
+        <div className="corner-content go">
+          <ArrowBigLeft size={38} color="#d32f2f" strokeWidth={2.5} className="go-arrow" />
+          <div className="corner-label go-label">GO</div>
+          <div className="corner-sub">COLLECT $200</div>
+        </div>
+      );
+    case "jail":
+      // Bottom-left corner: a diagonal "in jail" cell (bars) inset toward the interior of the
+      // board, and a separate "just visiting" label along the tile's outer edges.
+      return (
+        <div className="corner-content jail-corner">
+          <div className="jail-cell">
+            <div className="jail-window">
+              <div className="jail-bars">
+                <span />
+                <span />
+                <span />
+              </div>
+            </div>
+            <span className="jail-cell-label">IN JAIL</span>
+          </div>
+          <div className="jail-visiting">JUST VISITING</div>
+        </div>
+      );
+    case "free-parking":
+      // Top-left corner: diagonal, facing up and out toward the corner.
+      return (
+        <div className="corner-content diagonal diagonal-nw">
+          <ParkingCircle size={28} color="#e53935" strokeWidth={2} />
+          <div className="corner-label">FREE PARKING</div>
+        </div>
+      );
+    case "go-to-jail":
+      // Top-right corner: diagonal, facing up and out toward the corner.
+      return (
+        <div className="corner-content diagonal diagonal-ne">
+          <Siren size={26} color="#1565c0" strokeWidth={2} />
+          <div className="corner-label" style={{ color: "#d32f2f" }}>
+            GO TO JAIL
+          </div>
+        </div>
+      );
+    default:
+      return <div className="corner-label">{space.name.toUpperCase()}</div>;
+  }
 }
 
 export function Board({ state }: { state: GameState }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  return (
+    <div className="board-wrap">
+      <div className="board-grid">
+        {state.spaces.map((space) => {
+          const { col, row } = spaceToGrid(space.index);
+          const corner = isCorner(space.index);
+          const record = state.ownership[space.index];
+          const group = "group" in space ? space.group : null;
+          const rotation = corner ? 0 : edgeRotation(space.index);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+          return (
+            <div
+              key={space.index}
+              className={`tile ${corner ? "corner" : ""}`}
+              style={{ gridColumn: col + 1, gridRow: row + 1 }}
+            >
+              {record && record.ownerId && (
+                <div
+                  className="tile-owner-border"
+                  style={{ borderColor: PLAYER_COLORS[state.players.findIndex((p) => p.id === record.ownerId) % PLAYER_COLORS.length] }}
+                />
+              )}
+              <div className="tile-inner" style={{ transform: `rotate(${rotation}deg)` }}>
+                {corner ? (
+                  <CornerTile space={space} />
+                ) : (
+                  <>
+                    {group && <div className="tile-color-bar" style={{ background: GROUP_COLORS[group] }} />}
+                    <div className="tile-icon">
+                      <TileIcon space={space} />
+                    </div>
+                    <div className="tile-name">{space.name.toUpperCase()}</div>
+                    {"price" in space && <div className="tile-price">${space.price}</div>}
+                    {space.type === "tax" && <div className="tile-price">${space.amount}</div>}
+                  </>
+                )}
+              </div>
 
-    ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-    ctx.fillStyle = "#0f5132";
-    ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+              {record && (record.houses > 0 || record.hotel) && !record.mortgaged && (
+                <div className="building-row">
+                  {record.hotel ? (
+                    <div className="hotel" />
+                  ) : (
+                    Array.from({ length: record.houses }).map((_, i) => <div className="house" key={i} />)
+                  )}
+                </div>
+              )}
 
-    for (const space of state.spaces) {
-      const { col, row } = spaceToGrid(space.index);
-      const x = col * CELL;
-      const y = row * CELL;
-      const corner = isCorner(space.index);
+              {record && record.mortgaged && (
+                <div className="mortgage-banner">
+                  <span>MORTGAGED</span>
+                </div>
+              )}
 
-      ctx.fillStyle = "#f5f2e8";
-      ctx.fillRect(x, y, CELL, CELL);
-      ctx.strokeStyle = "#333";
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x, y, CELL, CELL);
+              {state.players
+                .map((p, i) => ({ p, i }))
+                .filter(({ p }) => p.position === space.index)
+                .map(({ p, i }, orderIndex, arr) => {
+                  const spread = arr.length > 1 ? 16 : 0;
+                  const angle = (orderIndex / arr.length) * Math.PI * 2;
+                  return (
+                    <div
+                      key={p.id}
+                      className="token"
+                      title={p.name}
+                      style={{
+                        background: p.bankrupt ? "#999" : PLAYER_COLORS[i % PLAYER_COLORS.length],
+                        transform: `translate(${Math.cos(angle) * spread}px, ${Math.sin(angle) * spread}px)`,
+                      }}
+                    />
+                  );
+                })}
+            </div>
+          );
+        })}
 
-      if (hasGroup(space) && !corner) {
-        ctx.fillStyle = GROUP_COLORS[space.group];
-        ctx.fillRect(x, y, CELL, CELL * 0.22);
-        ctx.strokeRect(x, y, CELL, CELL * 0.22);
-      }
-
-      const record = state.ownership[space.index];
-      if (record && record.ownerId) {
-        const ownerIndex = state.players.findIndex((p) => p.id === record.ownerId);
-        ctx.strokeStyle = PLAYER_COLORS[ownerIndex % PLAYER_COLORS.length];
-        ctx.lineWidth = 3;
-        ctx.strokeRect(x + 2, y + 2, CELL - 4, CELL - 4);
-        ctx.lineWidth = 1;
-      }
-
-      ctx.fillStyle = "#111";
-      ctx.font = "8px sans-serif";
-      wrapText(ctx, space.name, x + CELL / 2, y + CELL * 0.45, CELL - 6, 9);
-
-      if (record && (record.houses > 0 || record.hotel)) {
-        if (record.hotel) {
-          ctx.fillStyle = "#c62828";
-          ctx.fillRect(x + CELL / 2 - 6, y + CELL - 14, 12, 8);
-        } else {
-          ctx.fillStyle = "#2e7d32";
-          for (let h = 0; h < record.houses; h++) {
-            ctx.fillRect(x + 4 + h * 8, y + CELL - 12, 6, 6);
-          }
-        }
-      }
-    }
-
-    // Player tokens
-    for (let i = 0; i < state.players.length; i++) {
-      const player = state.players[i];
-      const { col, row } = spaceToGrid(player.position);
-      const baseX = col * CELL + CELL / 2;
-      const baseY = row * CELL + CELL * 0.75;
-      const offset = 9;
-      const angle = (i / Math.max(state.players.length, 1)) * Math.PI * 2;
-      const tx = baseX + Math.cos(angle) * offset * (state.players.length > 1 ? 1 : 0);
-      const ty = baseY + Math.sin(angle) * offset * (state.players.length > 1 ? 1 : 0);
-
-      ctx.beginPath();
-      ctx.arc(tx, ty, 7, 0, Math.PI * 2);
-      ctx.fillStyle = player.bankrupt ? "#999" : PLAYER_COLORS[i % PLAYER_COLORS.length];
-      ctx.fill();
-      ctx.strokeStyle = "#000";
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
-
-    // Center panel
-    ctx.fillStyle = "#0f5132";
-    ctx.fillRect(CELL, CELL, CANVAS_SIZE - 2 * CELL, CANVAS_SIZE - 2 * CELL);
-    ctx.fillStyle = "#f5f2e8";
-    ctx.font = "bold 28px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("MONOPOLY ARENA", CANVAS_SIZE / 2, CANVAS_SIZE / 2 - 10);
-    ctx.font = "14px sans-serif";
-    ctx.fillText(`Turn ${state.turn}`, CANVAS_SIZE / 2, CANVAS_SIZE / 2 + 20);
-    ctx.textAlign = "start";
-  }, [state]);
-
-  return <canvas ref={canvasRef} width={CANVAS_SIZE} height={CANVAS_SIZE} style={{ maxWidth: "100%", height: "auto" }} />;
-}
-
-function wrapText(ctx: CanvasRenderingContext2D, text: string, cx: number, startY: number, maxWidth: number, lineHeight: number) {
-  const words = text.split(" ");
-  let line = "";
-  const lines: string[] = [];
-  for (const word of words) {
-    const test = line ? `${line} ${word}` : word;
-    if (ctx.measureText(test).width > maxWidth && line) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = test;
-    }
-  }
-  if (line) lines.push(line);
-  ctx.textAlign = "center";
-  const totalHeight = lines.length * lineHeight;
-  let y = startY - totalHeight / 2 + lineHeight / 2;
-  for (const l of lines) {
-    ctx.fillText(l, cx, y);
-    y += lineHeight;
-  }
-  ctx.textAlign = "start";
+        <div className="board-center">
+          <div className="center-inner">
+            <div className="logo-ribbon">MONOPOLY</div>
+            <div className="logo-sub">A R E N A</div>
+            <div className="center-turn">Turn {state.turn}</div>
+            {state.winnerId ? (
+              <div className="center-winner">
+                <Trophy size={18} color="#ffd54f" />
+                {state.players.find((p) => p.id === state.winnerId)?.name} wins!
+              </div>
+            ) : (
+              <div className="center-current">
+                <span
+                  className="current-dot"
+                  style={{ background: PLAYER_COLORS[state.currentPlayerIndex % PLAYER_COLORS.length] }}
+                />
+                {state.players[state.currentPlayerIndex].name}'s turn
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }

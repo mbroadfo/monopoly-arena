@@ -14,6 +14,7 @@ const TOTAL_HOTELS = 12;
 const MAX_BUILD_ACTIONS_PER_TURN = 50;
 const MORTGAGE_INTEREST_RATE = 0.1;
 const MAX_FINANCE_ACTIONS_PER_TURN = 28; // one per ownable space, worst case
+const AUCTION_BID_INCREMENT = 10;
 
 interface Deck {
   cards: Card[];
@@ -274,7 +275,8 @@ export class Game {
         record.ownerId = player.id;
         this.log(`${player.name} buys ${space.name} for $${price}.`);
       } else {
-        this.log(`${player.name} declines to buy ${space.name}.`);
+        this.log(`${player.name} declines to buy ${space.name}. It goes to auction.`);
+        this.runAuction(spaceIndex);
       }
       return;
     }
@@ -284,6 +286,47 @@ export class Game {
     const rent = this.calculateRent(space, record, owner);
     this.log(`${player.name} owes ${owner.name} $${rent} rent for ${space.name}.`);
     this.payPlayer(player, owner, rent);
+  }
+
+  /** Runs a bidding auction for an unowned property among all active players. */
+  private runAuction(spaceIndex: number) {
+    const space = BOARD[spaceIndex] as Ownable;
+    const bidders = this.activePlayers().map((p) => p.id);
+    if (bidders.length === 0) return;
+
+    let currentBid = 0;
+    let highBidderId: string | null = null;
+    const passed = new Set<string>();
+    const maxTurns = bidders.length * 30;
+
+    for (let turn = 0, i = 0; turn < maxTurns; turn++, i++) {
+      const remaining = bidders.filter((id) => !passed.has(id));
+      if (remaining.length === 0) break;
+      if (remaining.length === 1 && highBidderId !== null) break;
+
+      const playerId = bidders[i % bidders.length];
+      if (passed.has(playerId)) continue;
+
+      const player = this.state.players.find((p) => p.id === playerId)!;
+      const bot = this.bots.get(playerId)!;
+      const nextMinBid = currentBid + AUCTION_BID_INCREMENT;
+      const bid = bot.auctionBid(this.getSnapshot(), playerId, spaceIndex, currentBid, highBidderId);
+      if (bid !== null && bid >= nextMinBid && bid <= player.cash) {
+        currentBid = bid;
+        highBidderId = playerId;
+      } else {
+        passed.add(playerId);
+      }
+    }
+
+    if (highBidderId) {
+      const winner = this.state.players.find((p) => p.id === highBidderId)!;
+      winner.cash -= currentBid;
+      this.state.ownership[spaceIndex].ownerId = winner.id;
+      this.log(`${winner.name} wins the auction for ${space.name} at $${currentBid}.`);
+    } else {
+      this.log(`No bids for ${space.name}; it remains unowned.`);
+    }
   }
 
   private calculateRent(

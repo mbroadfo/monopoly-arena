@@ -114,6 +114,12 @@ export interface BotDecisions {
   raiseCash(state: GameState, playerId: string, amountNeeded: number): number | null;
   /** Called once per turn after building; may mortgage or unmortgage at most one property per call. */
   chooseFinanceAction(state: GameState, playerId: string): FinanceAction | null;
+  /**
+   * Called during an auction (triggered when a player declines to buy a property they land on).
+   * Return a bid strictly greater than currentBid to stay in, or null to pass. Called repeatedly,
+   * round-robin among still-active bidders, until only one remains or everyone has passed.
+   */
+  auctionBid(state: GameState, playerId: string, spaceIndex: number, currentBid: number, highBidderId: string | null): number | null;
 }
 
 export interface Bot extends BotDecisions {

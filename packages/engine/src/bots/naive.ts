@@ -1,5 +1,6 @@
 import { GROUP_MEMBERS } from "../board.js";
-import type { Bot, FinanceAction, GameState, Ownable, PropertySpace } from "../types.js";
+import type { Bot, FinanceAction, GameState, PropertySpace } from "../types.js";
+import { mortgageCandidates, ownedMortgaged, unmortgageCost } from "./shared.js";
 
 export interface NaiveBotOptions {
   /** Minimum cash to keep on hand before buying or building. */
@@ -61,40 +62,24 @@ export function createNaiveBot(options: NaiveBotOptions = {}): Bot {
 
     chooseFinanceAction(state: GameState, playerId: string): FinanceAction | null {
       const player = state.players.find((p) => p.id === playerId)!;
-      const mortgaged = Object.entries(state.ownership)
-        .filter(([, r]) => r.ownerId === playerId && r.mortgaged)
-        .map(([i]) => Number(i))
-        .sort((a, b) => (state.spaces[a] as Ownable).price - (state.spaces[b] as Ownable).price);
-
-      for (const index of mortgaged) {
-        const cost = Math.ceil(((state.spaces[index] as Ownable).price / 2) * 1.1);
+      for (const index of ownedMortgaged(state, playerId)) {
+        const cost = unmortgageCost(state, index);
         if (player.cash - cost >= reserve) {
           return { action: "unmortgage", spaceIndex: index };
         }
       }
       return null;
     },
+
+    auctionBid(state: GameState, playerId: string, spaceIndex: number, currentBid: number): number | null {
+      const player = state.players.find((p) => p.id === playerId)!;
+      const space = state.spaces[spaceIndex] as PropertySpace | { price: number };
+      const nextBid = currentBid + 10;
+      // Never pay more than face value, and never bid below the cash reserve.
+      if (nextBid > space.price) return null;
+      if (player.cash - nextBid < reserve) return null;
+      return nextBid;
+    },
   };
-}
-
-/** Player's unmortgaged, house-free properties, least valuable to a monopoly first. */
-function mortgageCandidates(state: GameState, playerId: string): number[] {
-  const owned = Object.entries(state.ownership)
-    .filter(([, r]) => r.ownerId === playerId && !r.mortgaged && !r.hotel && r.houses === 0)
-    .map(([i]) => Number(i));
-
-  const inMonopoly = (index: number) => {
-    const space = state.spaces[index];
-    if (!("group" in space)) return false;
-    const members = GROUP_MEMBERS[space.group];
-    return members.every((i) => state.ownership[i].ownerId === playerId);
-  };
-
-  return owned.sort((a, b) => {
-    const aMono = inMonopoly(a) ? 1 : 0;
-    const bMono = inMonopoly(b) ? 1 : 0;
-    if (aMono !== bMono) return aMono - bMono;
-    return (state.spaces[a] as Ownable).price - (state.spaces[b] as Ownable).price;
-  });
 }
 

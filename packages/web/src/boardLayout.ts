@@ -28,4 +28,6 @@ export const GROUP_COLORS: Record<ColorGroup, string> = {
   utility: "#888888",
 };
 
-export const PLAYER_COLORS = ["#e63946", "#2a9d8f", "#f4a261", "#8338ec", "#3a86ff", "#ffbe0b"];
+// Validated against the dark chart surface (`dataviz` skill's validate_palette.js) for the
+// four-player case: lightness band, CVD separation, and contrast all pass for indices 0-3.
+export const PLAYER_COLORS = ["#e63946", "#2a9d8f", "#d97706", "#8338ec", "#3a86ff", "#ffbe0b"];

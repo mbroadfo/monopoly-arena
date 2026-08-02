@@ -14,11 +14,16 @@ export function PlayerPanel({ state }: { state: GameState }) {
               <div className="player-name">
                 {player.name} {isCurrent && "▶"}
               </div>
-              <div className="player-cash">${player.cash.toLocaleString()}</div>
-              <div className="player-meta">
-                {ownedCount} properties{player.inJail ? " · in jail" : ""}
-                {player.bankrupt ? " · bankrupt" : ""}
+              <div className="player-cash-row">
+                <span className="player-cash">${player.cash.toLocaleString()}</span>
+                <span className="player-meta">{ownedCount} properties</span>
               </div>
+              {(player.inJail || player.bankrupt) && (
+                <div className="player-meta">
+                  {player.inJail ? "in jail" : ""}
+                  {player.bankrupt ? "bankrupt" : ""}
+                </div>
+              )}
             </div>
           </div>
         );

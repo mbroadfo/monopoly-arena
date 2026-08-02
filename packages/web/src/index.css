@@ -10,29 +10,57 @@ body {
 }
 
 .app {
-  max-width: 1500px;
+  max-width: 1900px;
   margin: 0 auto;
-  padding: 16px 24px 40px;
+  padding: 16px 32px 24px;
 }
 
 .layout {
   display: flex;
   gap: 24px;
   align-items: flex-start;
+  justify-content: center;
   flex-wrap: wrap;
 }
 
-.board-column {
-  flex: 2 1 640px;
-  max-width: 940px;
-}
-
-.side-column {
-  flex: 1 1 360px;
-  min-width: 320px;
+.properties-column {
+  flex: 0 0 440px;
+  min-width: 380px;
+  height: calc(100vh - 70px);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+/* The chart keeps its natural size; the properties list absorbs whatever vertical space
+   is left, so the column always fits the viewport with no page scrollbar. */
+.properties-column .bankroll-chart {
+  flex: 0 0 auto;
+}
+
+/* Shrink-wraps to the board's actual rendered size (see .board-grid) rather than reserving
+   flex space the board doesn't use — that mismatch was what left black gaps on either side
+   of a viewport-height-capped board. */
+.board-column {
+  flex: 0 1 auto;
+}
+
+.side-column {
+  flex: 1 1 380px;
+  min-width: 320px;
+  max-width: 440px;
+  height: calc(100vh - 70px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Everything above the log feed keeps its natural size; the log feed absorbs whatever
+   vertical space is left, so the column always fits the viewport with no page scrollbar. */
+.side-column > *:not(.log-feed) {
+  flex: 0 0 auto;
 }
 
 .side-header h1 {
@@ -49,15 +77,18 @@ body {
 /* --- Board --- */
 
 .board-wrap {
-  width: 100%;
+  display: flex;
+  justify-content: center;
 }
 
 .board-grid {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(11, 1fr);
-  grid-template-rows: repeat(11, 1fr);
-  width: 100%;
+  /* grid-template-columns/rows are set inline from Board.tsx's EDGE_DEPTH_RATIO — see the
+     comment there for why (calc() + var() + fr is unreliable across browsers). */
+  /* Capped by viewport height (not column width — .board-column shrink-wraps to this, so a
+     percentage term here would be circular) so the page never needs to scroll. */
+  width: min(1100px, calc(100vh - 50px));
   aspect-ratio: 1 / 1;
   background: #0b3d2e;
   border: 4px solid #06251b;
@@ -82,12 +113,15 @@ body {
   z-index: 2;
 }
 
+/* flex-direction is set per-tile inline (column/column-reverse/row/row-reverse) so the same
+   four children — color bar, icon, name, price — always read center-to-edge regardless of
+   which side of the board they're on. space-between (rather than flex-start + a push-to-end
+   margin) works identically in all four directions without an axis-specific special case. */
 .tile-inner {
   flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: space-between;
   padding: 2px;
   text-align: center;
 }
@@ -98,29 +132,53 @@ body {
   border-bottom: 1px solid rgba(58, 58, 58, 0.35);
 }
 
+/* Left/right tiles: the tile is naturally wider than tall (deep edge track x narrow inner
+   track) and its content already lays out along that same axis via flex-direction — no
+   rotation needed, just a vertical bar instead of a horizontal one. */
+.tile-color-bar.vertical {
+  width: 22%;
+  height: 100%;
+  border-bottom: none;
+  border-inline: 1px solid rgba(58, 58, 58, 0.35);
+}
+
 .tile-icon {
-  margin-top: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
   height: 20px;
+  flex-shrink: 0;
 }
 
 .tile-name {
   font-size: 0.5rem;
   font-weight: 700;
   line-height: 1.08;
-  margin-top: 2px;
+  margin: 2px;
   color: #1c1c1c;
   word-break: break-word;
 }
 
 .tile-price {
-  margin-top: auto;
-  margin-bottom: 3px;
+  margin: 2px;
   font-size: 0.5rem;
   font-weight: 700;
   color: #3a6b3a;
+}
+
+/* Chance/community-chest have just an icon + name (no color bar or price to spread toward
+   the edge), so cluster them together instead of letting space-between push them apart. */
+.tile-inner.compact {
+  justify-content: center;
+  gap: 6px;
+}
+
+/* Vertical text (see edgeTextStyle in Board.tsx) needs an explicit height to wrap against —
+   without one, a flex item's cross-axis size defaults to its content's natural size, so the
+   text could render as one long unwrapped column instead of wrapping into the available depth. */
+.tile-inner.side .tile-name,
+.tile-inner.side .tile-price {
+  max-height: 100%;
 }
 
 .tax-icon {
@@ -130,14 +188,43 @@ body {
   font-family: Georgia, serif;
 }
 
-.corner-content {
+/* Crops off the "COMMUNITY CHEST" title baked into the top of the source art, showing just
+   the chest itself — the tile already prints its own name label below the icon. */
+.chest-icon-crop {
+  overflow: hidden;
   display: flex;
-  flex-direction: column;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
-  gap: 2px;
+}
+
+.chest-icon-crop img {
+  width: 155%;
+  height: auto;
+  object-fit: cover;
+  object-position: bottom;
+}
+
+/* GO / Jail / Go-To-Jail are complete pre-made corner cards (background, border, and
+   text all baked into the artwork), so they just fill the tile edge-to-edge. */
+.corner-image {
   width: 100%;
   height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Jail's source art isn't square (edge labels extend past the bars cell), so stretch to
+   fit rather than cropping — the labels are more important than a perfectly square pixel. */
+/* Jail's source art isn't square (the "JUST"/"VISITING" labels extend past the orange cell) —
+   contain (rather than fill's non-uniform stretch, or cover's cropping) shows the whole image
+   at its correct proportions, leaving the tile's own cream background as breathing room around
+   it instead of squishing those edge labels to fit. */
+.corner-image-contain {
+  object-fit: contain;
+}
+
+.corner-image-flip {
+  transform: rotate(180deg);
 }
 
 .corner-label {
@@ -148,133 +235,63 @@ body {
   line-height: 1.1;
 }
 
-.go-arrow {
-  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.25));
-}
-
-.go-label {
-  font-size: 1.5rem;
-  color: #d32f2f;
-  font-family: Georgia, serif;
-  font-style: italic;
-  font-weight: 900;
-  letter-spacing: 1px;
-  transform: skewX(-6deg);
-  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.15);
-}
-
-.corner-sub {
-  font-size: 0.5rem;
-  font-weight: 800;
-  color: #1c1c1c;
-  letter-spacing: 0.6px;
-}
-
-.diagonal {
-  transform: rotate(135deg);
-}
-
-.diagonal-ne {
-  transform: rotate(-135deg);
-}
-
-.jail-corner {
-  position: relative;
-}
-
-/* Axis-aligned cell, sides parallel to the tile edges, inset toward the board's interior. */
-.jail-cell {
-  position: absolute;
-  top: 8%;
-  right: 8%;
-  width: 56%;
-  height: 56%;
-  background: #faf6ec;
-  border: 2px solid #333;
-  border-radius: 2px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
-  padding-bottom: 3px;
-  overflow: visible;
-}
-
-/* Barred window is angled to look out toward the SW (outer) corner of the board. */
-.jail-window {
-  position: absolute;
-  bottom: -7px;
-  left: -7px;
-  width: 20px;
-  height: 20px;
-  background: #f57c00;
-  border: 2px solid #333;
-  border-radius: 2px;
-  transform: rotate(45deg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.jail-bars {
-  transform: rotate(-45deg);
-  display: flex;
-  gap: 2px;
-}
-
-.jail-bars span {
-  width: 1.6px;
-  height: 9px;
-  background: #fff;
-  display: block;
-}
-
-.jail-cell-label {
-  font-size: 0.38rem;
-  font-weight: 800;
-  color: #333;
-  white-space: nowrap;
-}
-
-/* Runs along the tile's outer edge, like a border, rather than sitting in the open corner area. */
-.jail-visiting {
-  position: absolute;
-  left: 4%;
-  right: 40%;
-  bottom: 3%;
-  font-size: 0.4rem;
-  font-weight: 800;
-  color: #c62828;
-  text-align: left;
-  line-height: 1.15;
-  letter-spacing: 0.3px;
-}
-
+/* Sits directly on top of the color bar (same 22% band) rather than beside it, matching how
+   a real board shows the little house/hotel markers on the colored stripe itself. */
 .building-row {
   position: absolute;
-  top: 24%;
-  left: 0;
-  right: 0;
   display: flex;
+  align-items: center;
   justify-content: center;
   gap: 2px;
   z-index: 3;
 }
 
+.building-row.edge-top,
+.building-row.edge-bottom {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 22%;
+}
+
+.building-row.edge-left,
+.building-row.edge-right {
+  top: 0;
+  bottom: 0;
+  flex-direction: column;
+  width: 22%;
+}
+
+.building-row.edge-left {
+  right: 0;
+}
+
+.building-row.edge-right {
+  left: 0;
+}
+
+/* Pentagon (square base + peaked roof) with a diagonal gradient and a bevel-style shadow for
+   a raised, 3D look instead of a flat colored rectangle. */
 .house {
-  width: 7px;
-  height: 8px;
-  background: #2e7d32;
-  border: 1px solid #1b5e20;
-  border-radius: 1px;
+  width: 10px;
+  height: 11px;
+  background: linear-gradient(145deg, #66bb6a, #1b5e20);
+  clip-path: polygon(50% 0%, 100% 38%, 100% 100%, 0% 100%, 0% 38%);
+  box-shadow:
+    1px 1px 2px rgba(0, 0, 0, 0.55),
+    inset -1px -1px 1px rgba(0, 0, 0, 0.35),
+    inset 1px 1px 1px rgba(255, 255, 255, 0.35);
 }
 
 .hotel {
-  width: 16px;
-  height: 9px;
-  background: #c62828;
-  border: 1px solid #7a0000;
-  border-radius: 1px;
+  width: 20px;
+  height: 12px;
+  background: linear-gradient(145deg, #ef5350, #7a0000);
+  clip-path: polygon(50% 0%, 100% 32%, 100% 100%, 0% 100%, 0% 32%);
+  box-shadow:
+    1px 1px 2px rgba(0, 0, 0, 0.55),
+    inset -1px -1px 1px rgba(0, 0, 0, 0.35),
+    inset 1px 1px 1px rgba(255, 255, 255, 0.35);
 }
 
 .mortgage-banner {
@@ -314,43 +331,120 @@ body {
 .board-center {
   grid-column: 2 / 11;
   grid-row: 2 / 11;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   position: relative;
 }
 
-.center-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
+/* Ribbon, "ARENA" subtitle, and the turn/status line are each pinned to their own fixed
+   spot in the center square (rather than stacked in normal flow) so the diagonal ribbon's
+   rotated footprint can never overlap the status text below it. */
+.center-logo {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 
 .logo-ribbon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   background: #c62828;
   color: #fff;
   font-family: Georgia, "Times New Roman", serif;
-  font-weight: 800;
-  font-size: clamp(1.8rem, 4vw, 3.2rem);
-  padding: 10px 28px;
+  padding: 6px 20px 8px;
   border: 3px solid #ffd54f;
   border-radius: 10px;
-  transform: rotate(-8deg);
-  letter-spacing: 2px;
+  transform: rotate(-45deg);
   text-align: center;
+  white-space: nowrap;
+}
+
+.logo-title {
+  font-weight: 800;
+  font-size: clamp(1.1rem, 2.6vw, 1.9rem);
+  letter-spacing: 2px;
 }
 
 .logo-sub {
   color: #ffd54f;
   font-weight: 700;
   letter-spacing: 4px;
-  font-size: 0.9rem;
+  font-size: 0.6em;
+}
+
+.center-status {
+  position: absolute;
+  bottom: 6%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
 }
 
 .center-turn {
   color: #f5f2e8;
   font-size: 0.95rem;
+}
+
+/* Sit in the two corners the diagonal ribbon doesn't cross, tilted to match its angle. */
+.center-card-pile {
+  position: absolute;
+  width: 72px;
+  height: 50px;
+  transform: rotate(-45deg);
+}
+
+.chance-pile {
+  top: 12%;
+  left: 10%;
+}
+
+.chest-pile {
+  bottom: 12%;
+  right: 10%;
+}
+
+.pile-card {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  border: 2px solid #1c1c1c;
+}
+
+.chance-pile .pile-card {
+  background: #e65100;
+}
+
+.chest-pile .pile-card {
+  background: #1565c0;
+}
+
+.pile-card.back:nth-child(1) {
+  transform: rotate(-7deg) translate(-3px, 2px);
+}
+
+.pile-card.back:nth-child(2) {
+  transform: rotate(5deg) translate(2px, -2px);
+}
+
+.pile-card.front {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: #fff;
+  font-weight: 800;
+  font-size: 0.6rem;
+  letter-spacing: 0.5px;
+  z-index: 1;
+}
+
+.pile-chest-icon {
+  width: 24px;
+  height: 24px;
 }
 
 .center-current,
@@ -420,11 +514,11 @@ body {
 
 .player-card {
   display: flex;
-  gap: 14px;
+  gap: 12px;
   align-items: center;
   background: #262626;
-  border-radius: 10px;
-  padding: 14px 16px;
+  border-radius: 8px;
+  padding: 8px 12px;
   border: 2px solid transparent;
 }
 
@@ -445,16 +539,22 @@ body {
 
 .player-name {
   font-weight: 700;
-  font-size: 1.05rem;
+  font-size: 0.95rem;
+}
+
+.player-cash-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .player-cash {
-  font-size: 1.3em;
+  font-size: 1.1em;
   font-weight: 600;
 }
 
 .player-meta {
-  font-size: 0.85em;
+  font-size: 0.8em;
   color: #999;
 }
 
@@ -466,11 +566,89 @@ body {
   font-weight: 700;
 }
 
+.bankroll-chart {
+  background: #111;
+  border-radius: 8px;
+  padding: 10px 10px 4px;
+  position: relative;
+}
+
+.bankroll-legend {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 4px;
+  font-size: 0.75rem;
+  color: #ccc;
+}
+
+.bankroll-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.bankroll-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.bankroll-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+.bankroll-gridline {
+  stroke: #333;
+  stroke-width: 1;
+}
+
+.bankroll-axis-label {
+  fill: #777;
+  font-size: 8px;
+}
+
+.bankroll-crosshair {
+  stroke: #666;
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+}
+
+.bankroll-tooltip {
+  position: absolute;
+  top: 8px;
+  background: #262626;
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.bankroll-tooltip-turn {
+  color: #999;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+
+.bankroll-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #eee;
+}
+
 .log-feed {
   background: #111;
   border-radius: 8px;
   padding: 10px;
-  height: 320px;
+  flex: 1 1 120px;
+  min-height: 120px;
   overflow-y: auto;
   font-family: ui-monospace, monospace;
   font-size: 0.8em;
@@ -479,4 +657,113 @@ body {
 
 .log-entry {
   color: #ccc;
+}
+
+/* Left nav: sized to match the board's height so both fit the viewport without scrolling
+   the page — this panel scrolls internally instead. */
+.properties-panel {
+  background: #111;
+  border-radius: 8px;
+  padding: 12px;
+  flex: 1 1 160px;
+  min-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.prop-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.prop-group-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.prop-group-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #999;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.prop-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.prop-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  border: 1.5px solid #3a3a3a;
+  background: #1c1c1c;
+  font-size: 0.68rem;
+  max-width: 100%;
+}
+
+.prop-chip.unowned {
+  color: #888;
+}
+
+.prop-chip.owned {
+  color: #f0f0f0;
+}
+
+.prop-chip.mortgaged {
+  opacity: 0.55;
+}
+
+.prop-chip.mortgaged .prop-chip-name {
+  text-decoration: line-through;
+}
+
+.prop-chip-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prop-chip-badges {
+  display: flex;
+  gap: 2px;
+}
+
+.prop-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 2px;
+  border-radius: 3px;
+  font-size: 0.55rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.prop-badge.houses {
+  background: #2e7d32;
+  color: #fff;
+}
+
+.prop-badge.hotel {
+  background: #c62828;
+  color: #fff;
+}
+
+.prop-badge.mortgaged {
+  background: #555;
+  color: #fff;
 }

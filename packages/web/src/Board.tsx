@@ -1,33 +1,103 @@
-import { ArrowBigLeft, Droplets, HelpCircle, Package, ParkingCircle, Siren, TrainFront, Trophy, Zap } from "lucide-react";
+import { HelpCircle, Lightbulb, ShowerHead, Trophy } from "lucide-react";
 import type { GameState, Space } from "@monopoly-arena/engine";
 import { GROUP_COLORS, PLAYER_COLORS, isCorner, spaceToGrid } from "./boardLayout";
+import railroadIcon from "./assets/railroad.png";
+import communityChestIcon from "./assets/community-chest.png";
+import goIcon from "./assets/go.png";
+import jailIcon from "./assets/jail.png";
+import goToJailIcon from "./assets/go-to-jail.png";
+import freeParkingIcon from "./assets/free-parking.png";
+
+type Edge = "top" | "bottom" | "left" | "right";
 
 /**
- * Rotation so tile text/icons face outward toward the player sitting at that edge, with the
- * colored group bar always landing on the side nearest the board's center (matching a real board).
- * Only used for non-corner tiles; corners get their own fixed per-corner treatment.
+ * Which of the four sides a (non-corner) space sits on. A left/right tile is geometrically
+ * identical to a top/bottom tile with its two axes swapped — never rotated content into a
+ * mismatched box, just lay each one out in its own natural orientation.
  */
-function edgeRotation(index: number): number {
+function edgeOf(index: number): Edge {
   const { col, row } = spaceToGrid(index);
-  if (row === 0) return 180;
-  if (col === 0) return 90;
-  if (col === 10) return -90;
-  return 0;
+  if (row === 0) return "top";
+  if (row === 10) return "bottom";
+  return col === 0 ? "left" : "right";
 }
 
-function TileIcon({ space, size = 20 }: { space: Space; size?: number }) {
+/**
+ * Flex direction that lays out [color bar, icon, name, price] from the board's center outward
+ * to the edge — the single rule every edge derives from, rather than a per-edge special case.
+ */
+function edgeFlexDirection(edge: Edge): "column" | "column-reverse" | "row" | "row-reverse" {
+  switch (edge) {
+    case "bottom":
+      return "column"; // center is above (up = toward center = main-axis start)
+    case "top":
+      return "column-reverse"; // center is below
+    case "right":
+      return "row"; // center is to the left
+    case "left":
+      return "row-reverse"; // center is to the right
+  }
+}
+
+/**
+ * Degrees to rotate the icon/name/price content so it faces the player sitting at that edge —
+ * matching a real board, where each side's text is upright for whoever is standing there, not
+ * for a single fixed viewer. Applied to each small content element individually (not the whole
+ * tile box), so there's no rectangular-box-vs-rotation mismatch to worry about.
+ */
+function edgeContentRotation(edge: Edge): number {
+  switch (edge) {
+    case "bottom":
+      return 0;
+    case "top":
+      return 180;
+    case "left":
+      return 90;
+    case "right":
+      return -90;
+  }
+}
+
+/**
+ * Text specifically can't just be rotated like the icon: `transform: rotate()` is a purely
+ * visual, post-layout effect, so a text block sitting in a `row`-direction flex container
+ * grows as wide as it needs to stay on one line *before* being rotated — it never wraps, and
+ * the rotated result can overflow. `writing-mode` is a real layout property instead: the browser
+ * wraps the text into it directly, respecting the space actually available. Top/bottom don't
+ * need this — a plain 180deg rotation never changes a box's width/height, so it can't overflow.
+ */
+function edgeTextStyle(edge: Edge): React.CSSProperties | undefined {
+  switch (edge) {
+    case "bottom":
+      return undefined;
+    case "top":
+      return { transform: "rotate(180deg)" };
+    case "left":
+      return { writingMode: "vertical-rl" };
+    case "right":
+      // Same vertical flow as "left", then mirrored so the two sides don't read identically.
+      return { writingMode: "vertical-rl", transform: "rotate(180deg)" };
+  }
+}
+
+function TileIcon({ space }: { space: Space }) {
   switch (space.type) {
     case "chance":
-      return <HelpCircle size={size} color="#e65100" strokeWidth={2.5} />;
+      return <HelpCircle size={28} color="#e65100" strokeWidth={2.5} />;
     case "community-chest":
-      return <Package size={size} color="#1565c0" strokeWidth={2} />;
+      return (
+        <div className="chest-icon-crop" style={{ width: 32, height: 32 }}>
+          <img src={communityChestIcon} alt="" />
+        </div>
+      );
     case "railroad":
-      return <TrainFront size={size} color="#333" strokeWidth={2} />;
+      return <img src={railroadIcon} alt="" style={{ width: 44, height: 44 * 0.64, display: "block" }} />;
     case "utility":
+      // lucide has no literal faucet icon; ShowerHead is the closest plumbing fixture available.
       return space.name.includes("Electric") ? (
-        <Zap size={size} color="#f9a825" fill="#fff59d" strokeWidth={2} />
+        <Lightbulb size={26} color="#f9a825" fill="#fff59d" strokeWidth={2} />
       ) : (
-        <Droplets size={size} color="#0288d1" fill="#81d4fa" strokeWidth={2} />
+        <ShowerHead size={26} color="#0288d1" strokeWidth={2} />
       );
     case "tax":
       return <span className="tax-icon">$</span>;
@@ -40,65 +110,53 @@ function TileIcon({ space, size = 20 }: { space: Space; size?: number }) {
 function CornerTile({ space }: { space: Space }) {
   switch (space.type) {
     case "go":
-      // Bottom-right corner: reads normally, facing the bottom edge, arrow pointing back along the bottom row.
-      return (
-        <div className="corner-content go">
-          <ArrowBigLeft size={38} color="#d32f2f" strokeWidth={2.5} className="go-arrow" />
-          <div className="corner-label go-label">GO</div>
-          <div className="corner-sub">COLLECT $200</div>
-        </div>
-      );
+      // Square card, already oriented correctly: arrow points back along the bottom row.
+      return <img src={goIcon} alt="GO" className="corner-image" />;
     case "jail":
-      // Bottom-left corner: a diagonal "in jail" cell (bars) inset toward the interior of the
-      // board, and a separate "just visiting" label along the tile's outer edges.
-      return (
-        <div className="corner-content jail-corner">
-          <div className="jail-cell">
-            <div className="jail-window">
-              <div className="jail-bars">
-                <span />
-                <span />
-                <span />
-              </div>
-            </div>
-            <span className="jail-cell-label">IN JAIL</span>
-          </div>
-          <div className="jail-visiting">JUST VISITING</div>
-        </div>
-      );
+      // Not a plain square — "JUST" runs down the left edge and "VISITING" along the bottom
+      // edge, outside the orange cell, which are exactly this tile's two true outer (SW)
+      // edges. `contain` keeps its real proportions instead of stretching those labels.
+      return <img src={jailIcon} alt="Jail / Just Visiting" className="corner-image corner-image-contain" />;
     case "free-parking":
-      // Top-left corner: diagonal, facing up and out toward the corner.
-      return (
-        <div className="corner-content diagonal diagonal-nw">
-          <ParkingCircle size={28} color="#e53935" strokeWidth={2} />
-          <div className="corner-label">FREE PARKING</div>
-        </div>
-      );
+      return <img src={freeParkingIcon} alt="Free Parking" className="corner-image corner-image-flip" />;
     case "go-to-jail":
-      // Top-right corner: diagonal, facing up and out toward the corner.
-      return (
-        <div className="corner-content diagonal diagonal-ne">
-          <Siren size={26} color="#1565c0" strokeWidth={2} />
-          <div className="corner-label" style={{ color: "#d32f2f" }}>
-            GO TO JAIL
-          </div>
-        </div>
-      );
+      return <img src={goToJailIcon} alt="Go To Jail" className="corner-image" />;
     default:
       return <div className="corner-label">{space.name.toUpperCase()}</div>;
   }
 }
 
+// Board side = 9W + 2D (W = one along-edge tile, D = corner/edge depth), applied identically to
+// both row and column axes, so corners stay square and every edge tile is deep automatically.
+// Set here (not in CSS) and interpolated into literal `fr` values: `calc(var(...) * 1fr)` mixing
+// a custom property, calc(), and the `fr` unit is inconsistently supported across browsers and
+// can silently collapse to ~1fr — plain literal fr values sidestep that entirely.
+const EDGE_DEPTH_RATIO = 2;
+// minmax(0, ...) strips the implicit content-based minimum plain `fr` tracks otherwise get,
+// so a tile's icon/text can't quietly inflate a track past its fair share of the ratio.
+const BOARD_TEMPLATE = `minmax(0, ${EDGE_DEPTH_RATIO}fr) repeat(9, minmax(0, 1fr)) minmax(0, ${EDGE_DEPTH_RATIO}fr)`;
+
 export function Board({ state }: { state: GameState }) {
   return (
     <div className="board-wrap">
-      <div className="board-grid">
+      <div className="board-grid" style={{ gridTemplateColumns: BOARD_TEMPLATE, gridTemplateRows: BOARD_TEMPLATE }}>
         {state.spaces.map((space) => {
           const { col, row } = spaceToGrid(space.index);
           const corner = isCorner(space.index);
           const record = state.ownership[space.index];
           const group = "group" in space ? space.group : null;
-          const rotation = corner ? 0 : edgeRotation(space.index);
+          const edge = corner ? null : edgeOf(space.index);
+          const isSide = edge === "left" || edge === "right";
+          // All four corners are now full-bleed pre-made card images, so tile-inner needs no padding.
+          const isImageCorner = corner;
+          const contentRotation = edge ? edgeContentRotation(edge) : 0;
+          const iconStyle = contentRotation ? { transform: `rotate(${contentRotation}deg)` } : undefined;
+          const textStyle = edge ? edgeTextStyle(edge) : undefined;
+          // Only real color-group properties have a color bar to anchor the center-to-edge
+          // spread. Everything else (chance, community chest, railroads, utilities, tax) has
+          // just an icon + name (+ maybe price) — cluster them together instead of letting
+          // space-between drift the icon away from its own label.
+          const isCompact = space.type !== "property";
 
           return (
             <div
@@ -112,24 +170,44 @@ export function Board({ state }: { state: GameState }) {
                   style={{ borderColor: PLAYER_COLORS[state.players.findIndex((p) => p.id === record.ownerId) % PLAYER_COLORS.length] }}
                 />
               )}
-              <div className="tile-inner" style={{ transform: `rotate(${rotation}deg)` }}>
+              <div
+                className={`tile-inner ${isSide ? "side" : ""} ${isCompact ? "compact" : ""}`}
+                style={{
+                  flexDirection: edge ? edgeFlexDirection(edge) : undefined,
+                  padding: isImageCorner ? 0 : undefined,
+                }}
+              >
                 {corner ? (
                   <CornerTile space={space} />
                 ) : (
                   <>
-                    {group && <div className="tile-color-bar" style={{ background: GROUP_COLORS[group] }} />}
-                    <div className="tile-icon">
+                    {/* Only real color-group properties get a band — railroads/utilities have a
+                        `group` for rent-calculation purposes, but no color swatch on a real board. */}
+                    {space.type === "property" && group && (
+                      <div className={`tile-color-bar ${isSide ? "vertical" : ""}`} style={{ background: GROUP_COLORS[group] }} />
+                    )}
+                    <div className="tile-icon" style={iconStyle}>
                       <TileIcon space={space} />
                     </div>
-                    <div className="tile-name">{space.name.toUpperCase()}</div>
-                    {"price" in space && <div className="tile-price">${space.price}</div>}
-                    {space.type === "tax" && <div className="tile-price">${space.amount}</div>}
+                    <div className="tile-name" style={textStyle}>
+                      {space.name.toUpperCase()}
+                    </div>
+                    {"price" in space && (
+                      <div className="tile-price" style={textStyle}>
+                        ${space.price}
+                      </div>
+                    )}
+                    {space.type === "tax" && (
+                      <div className="tile-price" style={textStyle}>
+                        ${space.amount}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
 
               {record && (record.houses > 0 || record.hotel) && !record.mortgaged && (
-                <div className="building-row">
+                <div className={`building-row ${edge ? `edge-${edge}` : ""}`}>
                   {record.hotel ? (
                     <div className="hotel" />
                   ) : (
@@ -167,9 +245,35 @@ export function Board({ state }: { state: GameState }) {
         })}
 
         <div className="board-center">
-          <div className="center-inner">
-            <div className="logo-ribbon">MONOPOLY</div>
-            <div className="logo-sub">A R E N A</div>
+          {/* Ribbon runs bottom-left to top-right at 45deg, leaving the other two corners open for the card piles. */}
+          <div className="center-card-pile chance-pile">
+            <div className="pile-card back" />
+            <div className="pile-card back" />
+            <div className="pile-card front">
+              <HelpCircle size={20} color="#fff" strokeWidth={3} />
+              <span>CHANCE</span>
+            </div>
+          </div>
+
+          <div className="center-card-pile chest-pile">
+            <div className="pile-card back" />
+            <div className="pile-card back" />
+            <div className="pile-card front">
+              <div className="chest-icon-crop pile-chest-icon">
+                <img src={communityChestIcon} alt="" />
+              </div>
+              <span>CHEST</span>
+            </div>
+          </div>
+
+          <div className="center-logo">
+            <div className="logo-ribbon">
+              <div className="logo-title">MONOPOLY</div>
+              <div className="logo-sub">ARENA</div>
+            </div>
+          </div>
+
+          <div className="center-status">
             <div className="center-turn">Turn {state.turn}</div>
             {state.winnerId ? (
               <div className="center-winner">

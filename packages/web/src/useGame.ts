@@ -1,14 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Game, createNaiveBot, createRandomBot, type Bot, type GameState } from "@monopoly-arena/engine";
+import {
+  Game,
+  createNaiveBot,
+  createOrangeRushBot,
+  createRailroadBaronBot,
+  createRandomBot,
+  type Bot,
+  type GameState,
+} from "@monopoly-arena/engine";
 
 export interface BotChoice {
   label: string;
   create: () => Bot;
 }
 
+export interface BankrollPoint {
+  turn: number;
+  cash: number[];
+}
+
+function historyPoint(state: GameState): BankrollPoint {
+  return { turn: state.turn, cash: state.players.map((p) => p.cash) };
+}
+
 export const BOT_CHOICES: BotChoice[] = [
   { label: "Naive (buys + builds within reserve)", create: () => createNaiveBot() },
-  { label: "Random (buys everything, never builds)", create: () => createRandomBot() },
+  { label: "Random (buys everything, builds with thin buffer)", create: () => createRandomBot() },
+  { label: "OrangeRush (rushes orange/red, thin reserve)", create: () => createOrangeRushBot() },
+  { label: "RailroadBaron (railroads/utilities, big reserve)", create: () => createRailroadBaronBot() },
 ];
 
 function newGame(botIndices: number[]): Game {
@@ -18,9 +37,10 @@ function newGame(botIndices: number[]): Game {
   });
 }
 
-export function useGame(initialBotIndices: number[] = [0, 1]) {
+export function useGame(initialBotIndices: number[] = [0, 1, 2, 3]) {
   const gameRef = useRef<Game>(newGame(initialBotIndices));
   const [state, setState] = useState<GameState>(() => gameRef.current.getSnapshot());
+  const [history, setHistory] = useState<BankrollPoint[]>(() => [historyPoint(state)]);
   const [playing, setPlaying] = useState(false);
   const [speedMs, setSpeedMs] = useState(400);
 
@@ -30,12 +50,16 @@ export function useGame(initialBotIndices: number[] = [0, 1]) {
       return;
     }
     gameRef.current.playTurn();
-    setState(gameRef.current.getSnapshot());
+    const snapshot = gameRef.current.getSnapshot();
+    setState(snapshot);
+    setHistory((h) => [...h, historyPoint(snapshot)]);
   }, []);
 
   const reset = useCallback((botIndices: number[]) => {
     gameRef.current = newGame(botIndices);
-    setState(gameRef.current.getSnapshot());
+    const snapshot = gameRef.current.getSnapshot();
+    setState(snapshot);
+    setHistory([historyPoint(snapshot)]);
     setPlaying(false);
   }, []);
 
@@ -45,5 +69,5 @@ export function useGame(initialBotIndices: number[] = [0, 1]) {
     return () => clearInterval(id);
   }, [playing, speedMs, step]);
 
-  return { state, step, reset, playing, setPlaying, speedMs, setSpeedMs };
+  return { state, history, step, reset, playing, setPlaying, speedMs, setSpeedMs };
 }

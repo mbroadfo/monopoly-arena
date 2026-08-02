@@ -2,15 +2,22 @@ import { useState } from "react";
 import { Board } from "./Board";
 import { PlayerPanel } from "./PlayerPanel";
 import { LogFeed } from "./LogFeed";
+import { PropertiesPanel } from "./PropertiesPanel";
+import { BankrollChart } from "./BankrollChart";
 import { BOT_CHOICES, useGame } from "./useGame";
 
 export function App() {
-  const [botIndices, setBotIndices] = useState([0, 1]);
-  const { state, step, reset, playing, setPlaying, speedMs, setSpeedMs } = useGame(botIndices);
+  const [botIndices, setBotIndices] = useState([0, 1, 2, 3]);
+  const { state, history, step, reset, playing, setPlaying, speedMs, setSpeedMs } = useGame(botIndices);
 
   return (
     <div className="app">
       <div className="layout">
+        <div className="properties-column">
+          <PropertiesPanel state={state} />
+          <BankrollChart history={history} players={state.players} />
+        </div>
+
         <div className="board-column">
           <Board state={state} />
         </div>

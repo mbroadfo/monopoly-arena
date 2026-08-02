@@ -97,6 +97,8 @@ export interface DiceRoll {
   isDouble: boolean;
 }
 
+export type FinanceAction = { action: "mortgage" | "unmortgage"; spaceIndex: number };
+
 /** Decisions a bot can be asked to make. Bots are pure functions of (state, playerId) -> decision. */
 export interface BotDecisions {
   shouldBuyProperty(state: GameState, playerId: string, spaceIndex: number): boolean;
@@ -104,6 +106,14 @@ export interface BotDecisions {
   chooseHouseToBuild(state: GameState, playerId: string): number | null;
   /** Return true to pay $50 to leave jail immediately (if funds allow), false to keep rolling for doubles. */
   shouldPayToLeaveJail(state: GameState, playerId: string): boolean;
+  /**
+   * Called when a debt can't be covered by cash on hand, with the shortfall still owed.
+   * Return the index of an owned, unmortgaged, house-free property to mortgage, or null
+   * to give up (triggering bankruptcy). Called repeatedly until the shortfall is covered.
+   */
+  raiseCash(state: GameState, playerId: string, amountNeeded: number): number | null;
+  /** Called once per turn after building; may mortgage or unmortgage at most one property per call. */
+  chooseFinanceAction(state: GameState, playerId: string): FinanceAction | null;
 }
 
 export interface Bot extends BotDecisions {

@@ -4,7 +4,7 @@ A Monopoly simulation engine and animated web UI for pitting AI bots against eac
 
 ## Structure
 
-- `packages/engine` — TypeScript rules engine (board, dice, cards, turns, houses/hotels, bankruptcy). Bots are plain objects implementing the `Bot` interface (`shouldBuyProperty`, `chooseHouseToBuild`, `shouldPayToLeaveJail`), so the engine has no idea what's driving a player.
+- `packages/engine` — TypeScript rules engine (board, dice, cards, turns, houses/hotels, mortgages, bankruptcy). Bots are plain objects implementing the `Bot` interface (`shouldBuyProperty`, `chooseHouseToBuild`, `shouldPayToLeaveJail`, `raiseCash`, `chooseFinanceAction`), so the engine has no idea what's driving a player.
 - `packages/web` — Vite + React app that renders the board on Canvas (tokens, houses/hotels, ownership) with step/auto-play controls and a live bankroll panel + event log.
 
 ## Getting started
@@ -17,11 +17,11 @@ npm run dev        # launch the web UI (http://localhost:5173)
 
 ## Current state
 
-Implemented: full board, buying, rent (properties/railroads/utilities), house/hotel building, a representative subset of Chance/Community Chest cards, jail, doubles, bankruptcy (with property transfer to creditor), win detection. Two reference bots (`NaiveBot`, `RandomBot`).
+Implemented: full board, buying, rent (properties/railroads/utilities), house/hotel building, mortgaging/unmortgaging (including automatic cash-raising to avoid bankruptcy), a representative subset of Chance/Community Chest cards, jail, doubles, bankruptcy (with property transfer to creditor), win detection. Two reference bots (`NaiveBot`, `RandomBot`).
 
 Not yet implemented (good next phases):
+
 - Trading/negotiation between players
-- Mortgaging properties
 - Auctions when a player declines to buy
 - Full 16-card Chance/Community Chest decks
 - Even-building rule enforcement for houses

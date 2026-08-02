@@ -1,7 +1,7 @@
 import { BOARD, GROUP_MEMBERS } from "./board.js";
 import { CHANCE_CARDS, COMMUNITY_CHEST_CARDS, type Card } from "./cards.js";
 import { rollDice, type Rng } from "./dice.js";
-import type { Bot, GameState, OwnershipRecord, PlayerState, PropertySpace } from "./types.js";
+import type { Bot, GameState, Ownable, OwnershipRecord, PlayerState, PropertySpace } from "./types.js";
 
 const STARTING_CASH = 1500;
 const GO_SALARY = 200;
@@ -12,6 +12,8 @@ const JAIL_FINE = 50;
 const TOTAL_HOUSES = 32;
 const TOTAL_HOTELS = 12;
 const MAX_BUILD_ACTIONS_PER_TURN = 50;
+const MORTGAGE_INTEREST_RATE = 0.1;
+const MAX_FINANCE_ACTIONS_PER_TURN = 28; // one per ownable space, worst case
 
 interface Deck {
   cards: Card[];
@@ -146,6 +148,7 @@ export class Game {
     }
 
     this.runBuildPhase(player);
+    this.runFinancePhase(player);
     this.checkForWinner();
     this.advanceToNextPlayer();
   }
@@ -362,6 +365,7 @@ export class Game {
 
   private payBank(player: PlayerState, amount: number, reason: string) {
     if (amount <= 0) return;
+    if (player.cash < amount) this.raiseCash(player, amount - player.cash);
     if (player.cash < amount) {
       this.handleBankruptcy(player, null);
       return;
@@ -372,12 +376,76 @@ export class Game {
 
   private payPlayer(payer: PlayerState, payee: PlayerState, amount: number) {
     if (amount <= 0) return;
+    if (payer.cash < amount) this.raiseCash(payer, amount - payer.cash);
     if (payer.cash < amount) {
       this.handleBankruptcy(payer, payee);
       return;
     }
     payer.cash -= amount;
     payee.cash += amount;
+  }
+
+  private mortgageValue(spaceIndex: number): number {
+    const space = BOARD[spaceIndex] as Ownable;
+    return Math.floor(space.price / 2);
+  }
+
+  private unmortgageCost(spaceIndex: number): number {
+    return Math.ceil(this.mortgageValue(spaceIndex) * (1 + MORTGAGE_INTEREST_RATE));
+  }
+
+  private canMortgage(playerId: string, spaceIndex: number): boolean {
+    const record = this.state.ownership[spaceIndex];
+    if (!record || record.ownerId !== playerId || record.mortgaged) return false;
+    return !record.hotel && record.houses === 0;
+  }
+
+  private canUnmortgage(playerId: string, spaceIndex: number): boolean {
+    const record = this.state.ownership[spaceIndex];
+    return !!record && record.ownerId === playerId && record.mortgaged;
+  }
+
+  private doMortgage(player: PlayerState, spaceIndex: number) {
+    const record = this.state.ownership[spaceIndex];
+    const value = this.mortgageValue(spaceIndex);
+    record.mortgaged = true;
+    player.cash += value;
+    this.log(`${player.name} mortgages ${BOARD[spaceIndex].name} for $${value}.`);
+  }
+
+  private doUnmortgage(player: PlayerState, spaceIndex: number) {
+    const record = this.state.ownership[spaceIndex];
+    const cost = this.unmortgageCost(spaceIndex);
+    record.mortgaged = false;
+    player.cash -= cost;
+    this.log(`${player.name} pays off the mortgage on ${BOARD[spaceIndex].name} for $${cost}.`);
+  }
+
+  /** Gives the player's bot a chance to mortgage properties to cover a shortfall, before bankruptcy. */
+  private raiseCash(player: PlayerState, amountNeeded: number) {
+    const bot = this.bots.get(player.id)!;
+    for (let i = 0; i < MAX_FINANCE_ACTIONS_PER_TURN && player.cash < amountNeeded; i++) {
+      const choice = bot.raiseCash(this.getSnapshot(), player.id, amountNeeded - player.cash);
+      if (choice === null || !this.canMortgage(player.id, choice)) return;
+      this.doMortgage(player, choice);
+    }
+  }
+
+  private runFinancePhase(player: PlayerState) {
+    if (player.bankrupt) return;
+    const bot = this.bots.get(player.id)!;
+    for (let i = 0; i < MAX_FINANCE_ACTIONS_PER_TURN; i++) {
+      const choice = bot.chooseFinanceAction(this.getSnapshot(), player.id);
+      if (choice === null) return;
+      if (choice.action === "mortgage") {
+        if (!this.canMortgage(player.id, choice.spaceIndex)) return;
+        this.doMortgage(player, choice.spaceIndex);
+      } else {
+        if (!this.canUnmortgage(player.id, choice.spaceIndex)) return;
+        if (player.cash < this.unmortgageCost(choice.spaceIndex)) return;
+        this.doUnmortgage(player, choice.spaceIndex);
+      }
+    }
   }
 
   private handleBankruptcy(player: PlayerState, creditor: PlayerState | null) {

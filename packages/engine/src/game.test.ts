@@ -373,6 +373,42 @@ describe("Game", () => {
     expect(rentLine).toContain("$50"); // double the normal $25 single-railroad rent
   });
 
+  it("records a walk move for the roll and a teleport move for a card that sends to jail", () => {
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2; // every roll: d1=1, d2=2, total=3
+    };
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+    const drawer: Bot = { name: "Drawer", ...passthrough };
+    const dummy: Bot = { name: "Dummy", ...passthrough };
+
+    const game = new Game({ playerNames: ["Drawer", "Dummy"], bots: [drawer, dummy], rng: fixedRoll });
+    game.state.currentPlayerIndex = 0; // force Drawer to go first, independent of the starting roll
+
+    let jailMove: (typeof game.state.moves)[number] | undefined;
+    for (let i = 0; i < 20 && !jailMove; i++) {
+      game.state.players[0].position = 39; // 39 + roll(3) = 2 (Community Chest) every time.
+      game.playTurn(); // Drawer.
+      jailMove = game.state.moves.find((m) => m.type === "teleport");
+      if (!jailMove) game.playTurn(); // Dummy.
+    }
+
+    expect(jailMove).toBeDefined();
+    expect(jailMove).toEqual({ playerId: "p0", from: 2, to: 10, type: "teleport", direction: "forward" });
+    // The dice roll that landed on Community Chest is recorded as its own preceding walk move.
+    expect(game.state.moves[0]).toEqual({ playerId: "p0", from: 39, to: 2, type: "walk", direction: "forward" });
+  });
+
   it("starts every player with $1500 and no properties owned", () => {
     const game = new Game({
       playerNames: ["Alice", "Bob"],

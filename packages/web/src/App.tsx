@@ -8,7 +8,8 @@ import { BOT_CHOICES, useGame } from "./useGame";
 
 export function App() {
   const [botIndices, setBotIndices] = useState([0, 1, 2, 3]);
-  const { state, history, step, reset, playing, setPlaying, speedMs, setSpeedMs } = useGame(botIndices);
+  const { state, history, step, reset, playing, setPlaying, speedMs, setSpeedMs, animating, fadingPlayerId } =
+    useGame(botIndices);
 
   return (
     <div className="app">
@@ -19,7 +20,7 @@ export function App() {
         </div>
 
         <div className="board-column">
-          <Board state={state} />
+          <Board state={state} fadingPlayerId={fadingPlayerId} />
         </div>
 
         <div className="side-column">
@@ -31,7 +32,7 @@ export function App() {
           <PlayerPanel state={state} />
 
           <div className="controls">
-            <button onClick={step} disabled={state.winnerId !== null}>
+            <button onClick={step} disabled={state.winnerId !== null || animating}>
               Step
             </button>
             <button onClick={() => setPlaying((p) => !p)} disabled={state.winnerId !== null}>

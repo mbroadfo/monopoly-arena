@@ -103,6 +103,7 @@ export class Game {
       winnerId: null,
       doublesStreak: 0,
       tradeConditions: [],
+      moves: [],
     };
     this.state.currentPlayerIndex = this.determineStartingPlayer();
   }
@@ -174,6 +175,7 @@ export class Game {
 
     this.state.turn += 1;
     this.state.doublesStreak = 0;
+    this.state.moves = [];
 
     if (player.inJail) {
       this.handleJailTurn(player);
@@ -265,6 +267,7 @@ export class Game {
       player.cash += GO_SALARY;
       this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
     }
+    this.state.moves.push({ playerId: player.id, from: before, to: player.position, type: "walk", direction: "forward" });
   }
 
   /** Walks forward from a position (wrapping at 40) to the first space of the given type. */
@@ -277,9 +280,11 @@ export class Game {
   }
 
   private sendToJail(player: PlayerState) {
+    const before = player.position;
     player.position = JAIL_SPACE_INDEX;
     player.inJail = true;
     player.jailTurns = 0;
+    this.state.moves.push({ playerId: player.id, from: before, to: JAIL_SPACE_INDEX, type: "teleport", direction: "forward" });
   }
 
   private resolveSpace(player: PlayerState, rentOverride?: RentOverride) {
@@ -444,6 +449,7 @@ export class Game {
           player.cash += GO_SALARY;
           this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
         }
+        this.state.moves.push({ playerId: player.id, from: before, to: player.position, type: "walk", direction: "forward" });
         this.resolveSpace(player);
         return;
       }
@@ -458,6 +464,7 @@ export class Game {
           player.cash += GO_SALARY;
           this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
         }
+        this.state.moves.push({ playerId: player.id, from: before, to: player.position, type: "walk", direction: "forward" });
         this.resolveSpace(player, "double-railroad");
         return;
       }
@@ -468,15 +475,19 @@ export class Game {
           player.cash += GO_SALARY;
           this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
         }
+        this.state.moves.push({ playerId: player.id, from: before, to: player.position, type: "walk", direction: "forward" });
         this.resolveSpace(player, "utility-x10");
         return;
       }
-      case "go-back-spaces":
+      case "go-back-spaces": {
         // Never awards GO salary, even if it would wrap past 0 — matches the real rule, and
         // sidesteps movePlayer's forward-only pass-GO detection and JS's negative-modulo quirk.
+        const before = player.position;
         player.position = ((player.position - effect.spaces) % 40 + 40) % 40;
+        this.state.moves.push({ playerId: player.id, from: before, to: player.position, type: "walk", direction: "backward" });
         this.resolveSpace(player);
         return;
+      }
       case "collect":
         player.cash += effect.amount;
         return;

@@ -246,7 +246,17 @@ body {
   z-index: 3;
 }
 
-.building-row.edge-top,
+/* The color bar is the flex-order-first child of .tile-inner, but edge-top tiles lay their
+   content out with flex-direction: column-reverse (see edgeFlexDirection in Board.tsx — "center
+   is below" for a top-row tile), which pins that first child to the BOTTOM of the tile, not the
+   top. The building row has to match wherever the color bar actually lands. */
+.building-row.edge-top {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 22%;
+}
+
 .building-row.edge-bottom {
   top: 0;
   left: 0;
@@ -316,16 +326,40 @@ body {
   border-radius: 2px;
 }
 
+.token-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+}
+
 .token {
   position: absolute;
-  bottom: 15%;
-  left: 50%;
-  width: 13px;
-  height: 13px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
-  border: 1.5px solid #000;
-  margin-left: -6.5px;
-  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 35% 25%, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0) 55%), var(--token-color);
+  border: 1.5px solid rgba(0, 0, 0, 0.6);
+  box-shadow: 0 3px 3px rgba(0, 0, 0, 0.45), inset 0 -3px 4px rgba(0, 0, 0, 0.25);
+  transition: left 90ms linear, top 90ms linear, opacity 140ms ease;
+}
+
+/* White stroke reads clearly against every PLAYER_COLORS badge, including the light yellow
+   one — the dark drop-shadow adds a contrast edge for that case specifically. */
+.token-icon {
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.85));
+}
+
+.token.bankrupt {
+  background: radial-gradient(circle at 35% 25%, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 55%), #888;
+  filter: grayscale(1);
+}
+
+.token.hidden {
+  opacity: 0;
 }
 
 .board-center {

@@ -5,7 +5,7 @@ A Monopoly simulation engine and animated web UI for pitting AI bots against eac
 ## Structure
 
 - `packages/engine` — TypeScript rules engine (board, dice, cards, turns, houses/hotels, mortgages, auctions, trading, bankruptcy). Bots are plain objects implementing the `Bot` interface (`shouldBuyProperty`, `chooseHouseToBuild`, `shouldPayToLeaveJail`, `raiseCash`, `chooseFinanceAction`, `auctionBid`, `proposeTrade`, `evaluateTrade`), so the engine has no idea what's driving a player.
-- `packages/web` — Vite + React app that renders the board as a DOM/CSS grid (tokens, houses/hotels, mortgages, ownership) with step/auto-play controls and a live bankroll panel + event log.
+- `packages/web` — Vite + React app that renders the board as a DOM/CSS grid (tokens, houses/hotels, mortgages, ownership) with step/auto-play controls and a live bankroll panel + event log. Player tokens are classic-piece icons that animate around the board turn by turn, with a pause between distinct movements within a turn (e.g. a dice roll followed by a card that sends the player to jail); animation speed scales with the speed slider and switches off in favor of instant movement once the slider is fast enough that animating would hold the simulation back.
 
 ## Getting started
 

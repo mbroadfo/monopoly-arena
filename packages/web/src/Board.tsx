@@ -1,6 +1,6 @@
-import { HelpCircle, Lightbulb, ShowerHead, Trophy } from "lucide-react";
+import { Car, Cat, Crown, Dog, Footprints, HelpCircle, Lightbulb, Ship, ShowerHead, Trophy } from "lucide-react";
 import type { GameState, Space } from "@monopoly-arena/engine";
-import { GROUP_COLORS, PLAYER_COLORS, isCorner, spaceToGrid } from "./boardLayout";
+import { EDGE_DEPTH_RATIO, GROUP_COLORS, PLAYER_COLORS, isCorner, spaceToGrid, spaceToPercent } from "./boardLayout";
 import railroadIcon from "./assets/railroad.png";
 import communityChestIcon from "./assets/community-chest.png";
 import goIcon from "./assets/go.png";
@@ -131,12 +131,31 @@ function CornerTile({ space }: { space: Space }) {
 // Set here (not in CSS) and interpolated into literal `fr` values: `calc(var(...) * 1fr)` mixing
 // a custom property, calc(), and the `fr` unit is inconsistently supported across browsers and
 // can silently collapse to ~1fr — plain literal fr values sidestep that entirely.
-const EDGE_DEPTH_RATIO = 2;
+// EDGE_DEPTH_RATIO itself lives in boardLayout.ts (shared with spaceToPercent's token math).
 // minmax(0, ...) strips the implicit content-based minimum plain `fr` tracks otherwise get,
 // so a tile's icon/text can't quietly inflate a track past its fair share of the ratio.
 const BOARD_TEMPLATE = `minmax(0, ${EDGE_DEPTH_RATIO}fr) repeat(9, minmax(0, 1fr)) minmax(0, ${EDGE_DEPTH_RATIO}fr)`;
 
-export function Board({ state }: { state: GameState }) {
+// Classic Monopoly piece icons, matched 1:1 by player index to PLAYER_COLORS. Single-color
+// (stroke-only) icons rather than emoji, so color/contrast is fully controllable against the
+// token's own background — see .token-icon in index.css.
+const TOKEN_ICONS = [Crown, Car, Dog, Footprints, Ship, Cat];
+
+// Fixed per-player-index offsets for tokens sharing a tile — deliberately NOT recomputed from
+// how many players currently share the tile (that made every token on a tile jump to a new
+// spread position whenever another token entered or passed through). A given player always
+// sits in the same slot, whether alone or accompanied, so only the token that's actually moving
+// ever visibly moves.
+const TOKEN_SLOT_OFFSETS: [number, number][] = [
+  [-7, -7],
+  [7, -7],
+  [-7, 7],
+  [7, 7],
+  [0, -11],
+  [0, 11],
+];
+
+export function Board({ state, fadingPlayerId }: { state: GameState; fadingPlayerId?: string | null }) {
   return (
     <div className="board-wrap">
       <div className="board-grid" style={{ gridTemplateColumns: BOARD_TEMPLATE, gridTemplateRows: BOARD_TEMPLATE }}>
@@ -221,28 +240,32 @@ export function Board({ state }: { state: GameState }) {
                   <span>MORTGAGED</span>
                 </div>
               )}
-
-              {state.players
-                .map((p, i) => ({ p, i }))
-                .filter(({ p }) => p.position === space.index)
-                .map(({ p, i }, orderIndex, arr) => {
-                  const spread = arr.length > 1 ? 16 : 0;
-                  const angle = (orderIndex / arr.length) * Math.PI * 2;
-                  return (
-                    <div
-                      key={p.id}
-                      className="token"
-                      title={p.name}
-                      style={{
-                        background: p.bankrupt ? "#999" : PLAYER_COLORS[i % PLAYER_COLORS.length],
-                        transform: `translate(${Math.cos(angle) * spread}px, ${Math.sin(angle) * spread}px)`,
-                      }}
-                    />
-                  );
-                })}
             </div>
           );
         })}
+
+        <div className="token-layer">
+          {state.players.map((p, i) => {
+            const { left, top } = spaceToPercent(p.position);
+            const [dx, dy] = TOKEN_SLOT_OFFSETS[i % TOKEN_SLOT_OFFSETS.length];
+            const Icon = TOKEN_ICONS[i % TOKEN_ICONS.length];
+            return (
+              <div
+                key={p.id}
+                className={`token ${p.bankrupt ? "bankrupt" : ""} ${p.id === fadingPlayerId ? "hidden" : ""}`}
+                title={p.name}
+                style={{
+                  left: `${left}%`,
+                  top: `${top}%`,
+                  ["--token-color" as string]: PLAYER_COLORS[i % PLAYER_COLORS.length],
+                  transform: `translate(-50%, -50%) translate(${dx}px, ${dy}px)`,
+                }}
+              >
+                <Icon className="token-icon" size={15} color="#fff" strokeWidth={2.75} />
+              </div>
+            );
+          })}
+        </div>
 
         <div className="board-center">
           {/* Ribbon runs bottom-left to top-right at 45deg, leaving the other two corners open for the card piles. */}

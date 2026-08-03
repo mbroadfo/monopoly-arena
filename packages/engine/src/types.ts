@@ -89,6 +89,24 @@ export interface GameState {
   winnerId: string | null;
   doublesStreak: number;
   tradeConditions: TradeCondition[];
+  moves: MoveEvent[];
+}
+
+/**
+ * One movement within the current turn, in order — a turn can produce several (a doubles
+ * chain, or a dice roll followed by a card that moves the player again). Reset at the start
+ * of each `playTurn()` call so it only ever reflects the turn just played; lets the UI animate
+ * each movement distinctly (e.g. a pause between "rolled onto Community Chest" and "card sent
+ * to jail") instead of only seeing the final resting position.
+ */
+export interface MoveEvent {
+  playerId: string;
+  from: number;
+  to: number;
+  /** "walk" = animate stepping tile-by-tile; "teleport" = direct jump (jail). */
+  type: "walk" | "teleport";
+  /** Meaningless for "teleport". */
+  direction: "forward" | "backward";
 }
 
 export interface DiceRoll {

@@ -15,6 +15,31 @@ export function isCorner(index: number): boolean {
   return index === 0 || index === 10 || index === 20 || index === 30;
 }
 
+// Board side = 9W + 2D (W = one along-edge tile, D = corner/edge depth) — matches Board.tsx's
+// BOARD_TEMPLATE, which lays out grid-template-columns/rows as this ratio in literal fr values.
+export const EDGE_DEPTH_RATIO = 2;
+const INNER_TRACKS = 9;
+const TOTAL_UNITS = EDGE_DEPTH_RATIO * 2 + INNER_TRACKS;
+
+function trackStart(i: number): number {
+  if (i <= 0) return 0;
+  if (i >= 10) return EDGE_DEPTH_RATIO + INNER_TRACKS;
+  return EDGE_DEPTH_RATIO + (i - 1);
+}
+
+function trackSize(i: number): number {
+  return i === 0 || i === 10 ? EDGE_DEPTH_RATIO : 1;
+}
+
+/** A space's center as a 0-100 percentage of the board, accounting for the corner tracks
+ * being wider than the 9 inner tracks — used to position tokens on an absolute overlay layer. */
+export function spaceToPercent(index: number): { left: number; top: number } {
+  const { col, row } = spaceToGrid(index);
+  const left = ((trackStart(col) + trackSize(col) / 2) / TOTAL_UNITS) * 100;
+  const top = ((trackStart(row) + trackSize(row) / 2) / TOTAL_UNITS) * 100;
+  return { left, top };
+}
+
 export const GROUP_COLORS: Record<ColorGroup, string> = {
   brown: "#8b4513",
   lightblue: "#aee2f0",

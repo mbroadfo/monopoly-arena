@@ -1,7 +1,7 @@
 import { BOARD, GROUP_MEMBERS } from "./board.js";
 import { CHANCE_CARDS, COMMUNITY_CHEST_CARDS, type Card } from "./cards.js";
 import { rollDice, type Rng } from "./dice.js";
-import type { Bot, GameState, Ownable, OwnershipRecord, PlayerState, PropertySpace } from "./types.js";
+import type { Bot, GameState, Ownable, OwnershipRecord, PlayerState, PropertySpace, TradeOffer } from "./types.js";
 
 const STARTING_CASH = 1500;
 const GO_SALARY = 200;
@@ -38,6 +38,14 @@ function shuffle<T>(items: T[], rng: Rng): T[] {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
+}
+
+function describeTradeSide(properties: number[], cash: number, goojfCards: number): string {
+  const parts: string[] = [];
+  if (properties.length > 0) parts.push(properties.map((i) => BOARD[i].name).join(", "));
+  if (cash > 0) parts.push(`$${cash}`);
+  if (goojfCards > 0) parts.push(`${goojfCards} Get Out of Jail Free card${goojfCards > 1 ? "s" : ""}`);
+  return parts.length > 0 ? parts.join(" + ") : "nothing";
 }
 
 export interface GameOptions {
@@ -91,6 +99,7 @@ export class Game {
       log: [],
       winnerId: null,
       doublesStreak: 0,
+      tradeConditions: [],
     };
   }
 
@@ -148,6 +157,7 @@ export class Game {
       if (this.isGameOver()) return;
     }
 
+    this.runTradePhase(player);
     this.runBuildPhase(player);
     this.runFinancePhase(player);
     this.checkForWinner();
@@ -283,7 +293,11 @@ export class Game {
     if (record.ownerId === player.id || record.mortgaged) return;
 
     const owner = this.state.players.find((p) => p.id === record.ownerId)!;
-    const rent = this.calculateRent(space, record, owner);
+    const rent = this.calculateRent(space, record, owner, player);
+    if (rent === 0 && space.type === "property") {
+      this.log(`${player.name} owes no rent for ${space.name} (waived).`);
+      return;
+    }
     this.log(`${player.name} owes ${owner.name} $${rent} rent for ${space.name}.`);
     this.payPlayer(player, owner, rent);
   }
@@ -333,6 +347,7 @@ export class Game {
     space: PropertySpace | Extract<(typeof BOARD)[number], { type: "railroad" | "utility" }>,
     record: OwnershipRecord,
     owner: PlayerState,
+    payer: PlayerState,
   ): number {
     if (space.type === "railroad") {
       const ownedCount = GROUP_MEMBERS.railroad.filter((i) => this.state.ownership[i].ownerId === owner.id).length;
@@ -344,10 +359,28 @@ export class Game {
       const roll = rollDice(this.rng);
       return roll.total * multiplier;
     }
-    if (record.hotel) return space.rent[5];
-    if (record.houses > 0) return space.rent[record.houses];
-    const hasMonopoly = GROUP_MEMBERS[space.group].every((i) => this.state.ownership[i].ownerId === owner.id);
-    return hasMonopoly ? space.rent[0] * 2 : space.rent[0];
+
+    let rent: number;
+    if (record.hotel) rent = space.rent[5];
+    else if (record.houses > 0) rent = space.rent[record.houses];
+    else {
+      const hasMonopoly = GROUP_MEMBERS[space.group].every((i) => this.state.ownership[i].ownerId === owner.id);
+      rent = hasMonopoly ? space.rent[0] * 2 : space.rent[0];
+    }
+
+    // Trade-negotiated rent waiver/cap — only applies to color properties, and only while
+    // the same player who struck the deal still owns it (see TradeCondition doc comment).
+    const condition = this.state.tradeConditions.find(
+      (c) => c.spaceIndex === space.index && c.ownerId === owner.id && c.protectedPlayerId === payer.id,
+    );
+    if (condition?.kind === "waive" && (condition.usesRemaining ?? 0) > 0) {
+      condition.usesRemaining! -= 1;
+      return 0;
+    }
+    if (condition?.kind === "cap" && condition.capLevel !== undefined) {
+      return Math.min(rent, space.rent[condition.capLevel]);
+    }
+    return rent;
   }
 
   private applyCard(player: PlayerState, card: Card) {
@@ -488,6 +521,75 @@ export class Game {
         if (player.cash < this.unmortgageCost(choice.spaceIndex)) return;
         this.doUnmortgage(player, choice.spaceIndex);
       }
+    }
+  }
+
+  /** One trade proposal attempt per player per turn — no counter-offer negotiation. */
+  private runTradePhase(player: PlayerState) {
+    if (player.bankrupt) return;
+    const bot = this.bots.get(player.id)!;
+    const offer = bot.proposeTrade(this.getSnapshot(), player.id);
+    if (!offer || !this.isValidTradeOffer(player, offer)) return;
+
+    const counterparty = this.state.players.find((p) => p.id === offer.toPlayerId);
+    if (!counterparty || counterparty.bankrupt) return;
+
+    const counterpartyBot = this.bots.get(counterparty.id)!;
+    if (!counterpartyBot.evaluateTrade(this.getSnapshot(), counterparty.id, offer)) {
+      this.log(`${player.name} offers a trade to ${counterparty.name}, which is declined.`);
+      return;
+    }
+    this.executeTrade(player, counterparty, offer);
+  }
+
+  /** Defensive validation against a bot proposing something illegal — silently ignored, not a crash. */
+  private isValidTradeOffer(player: PlayerState, offer: TradeOffer): boolean {
+    if (offer.fromPlayerId !== player.id || offer.toPlayerId === player.id) return false;
+    const counterparty = this.state.players.find((p) => p.id === offer.toPlayerId);
+    if (!counterparty || counterparty.bankrupt) return false;
+
+    const isTradeable = (spaceIndex: number, ownerId: string) => {
+      const space = BOARD[spaceIndex];
+      if (!space || (space.type !== "property" && space.type !== "railroad" && space.type !== "utility")) return false;
+      const record = this.state.ownership[spaceIndex];
+      return record.ownerId === ownerId && record.houses === 0 && !record.hotel;
+    };
+    if (!offer.offeredProperties.every((i) => isTradeable(i, player.id))) return false;
+    if (!offer.requestedProperties.every((i) => isTradeable(i, counterparty.id))) return false;
+
+    if (offer.offeredCash < 0 || offer.offeredCash > player.cash) return false;
+    if (offer.requestedCash < 0 || offer.requestedCash > counterparty.cash) return false;
+    if (offer.offeredGetOutOfJailFreeCards < 0 || offer.offeredGetOutOfJailFreeCards > player.getOutOfJailFreeCards) return false;
+    if (offer.requestedGetOutOfJailFreeCards < 0 || offer.requestedGetOutOfJailFreeCards > counterparty.getOutOfJailFreeCards) return false;
+
+    for (const condition of offer.conditions) {
+      const space = BOARD[condition.spaceIndex];
+      if (!space || space.type !== "property") return false;
+      const parties = [offer.fromPlayerId, offer.toPlayerId];
+      if (!parties.includes(condition.ownerId) || !parties.includes(condition.protectedPlayerId)) return false;
+      if (condition.ownerId === condition.protectedPlayerId) return false;
+      if (condition.kind === "cap" && condition.capLevel === undefined) return false;
+      if (condition.kind === "waive" && !(condition.usesRemaining && condition.usesRemaining >= 1)) return false;
+    }
+    return true;
+  }
+
+  private executeTrade(from: PlayerState, to: PlayerState, offer: TradeOffer) {
+    for (const index of offer.offeredProperties) this.state.ownership[index].ownerId = to.id;
+    for (const index of offer.requestedProperties) this.state.ownership[index].ownerId = from.id;
+
+    from.cash += offer.requestedCash - offer.offeredCash;
+    to.cash += offer.offeredCash - offer.requestedCash;
+    from.getOutOfJailFreeCards += offer.requestedGetOutOfJailFreeCards - offer.offeredGetOutOfJailFreeCards;
+    to.getOutOfJailFreeCards += offer.offeredGetOutOfJailFreeCards - offer.requestedGetOutOfJailFreeCards;
+
+    this.state.tradeConditions.push(...offer.conditions);
+
+    const given = describeTradeSide(offer.offeredProperties, offer.offeredCash, offer.offeredGetOutOfJailFreeCards);
+    const received = describeTradeSide(offer.requestedProperties, offer.requestedCash, offer.requestedGetOutOfJailFreeCards);
+    this.log(`${from.name} trades ${given} to ${to.name} for ${received}.`);
+    if (offer.conditions.length > 0) {
+      this.log(`The trade includes ${offer.conditions.length} rent condition${offer.conditions.length > 1 ? "s" : ""}.`);
     }
   }
 

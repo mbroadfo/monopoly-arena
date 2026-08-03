@@ -88,6 +88,7 @@ export interface GameState {
   log: string[];
   winnerId: string | null;
   doublesStreak: number;
+  tradeConditions: TradeCondition[];
 }
 
 export interface DiceRoll {
@@ -98,6 +99,36 @@ export interface DiceRoll {
 }
 
 export type FinanceAction = { action: "mortgage" | "unmortgage"; spaceIndex: number };
+
+/**
+ * A rent side-agreement attached to a trade, tied to the two players who made the deal —
+ * not an official Monopoly rule, but not disallowed either. Only applies to `type: "property"`
+ * spaces (railroads/utilities aren't tiered by improvement level the same way). Stays active
+ * only while `ownerId` still holds the property; if it's traded again to someone else, the
+ * entry simply stops matching rather than being actively cleaned up.
+ */
+export interface TradeCondition {
+  spaceIndex: number;
+  ownerId: string;
+  protectedPlayerId: string;
+  kind: "waive" | "cap";
+  /** Index into space.rent (0 = base, 1-4 = houses, 5 = hotel). Required for "cap". */
+  capLevel?: 0 | 1 | 2 | 3 | 4 | 5;
+  /** Free passes remaining, decremented on each use. Required for "waive". */
+  usesRemaining?: number;
+}
+
+export interface TradeOffer {
+  fromPlayerId: string;
+  toPlayerId: string;
+  offeredProperties: number[];
+  offeredCash: number;
+  offeredGetOutOfJailFreeCards: number;
+  requestedProperties: number[];
+  requestedCash: number;
+  requestedGetOutOfJailFreeCards: number;
+  conditions: TradeCondition[];
+}
 
 /** Decisions a bot can be asked to make. Bots are pure functions of (state, playerId) -> decision. */
 export interface BotDecisions {
@@ -120,6 +151,10 @@ export interface BotDecisions {
    * round-robin among still-active bidders, until only one remains or everyone has passed.
    */
   auctionBid(state: GameState, playerId: string, spaceIndex: number, currentBid: number, highBidderId: string | null): number | null;
+  /** Called once per turn; return a trade to propose to another player, or null to skip. */
+  proposeTrade(state: GameState, playerId: string): TradeOffer | null;
+  /** Called on the other player's bot when this player is offered a trade. */
+  evaluateTrade(state: GameState, playerId: string, offer: TradeOffer): boolean;
 }
 
 export interface Bot extends BotDecisions {

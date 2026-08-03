@@ -43,6 +43,8 @@ describe("Game", () => {
       shouldPayToLeaveJail: () => true,
       raiseCash: () => null,
       chooseFinanceAction: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
     };
     // Neither bot ever buys directly, so every landed-on property goes to auction.
     const decliner: Bot = {
@@ -70,6 +72,78 @@ describe("Game", () => {
     expect(ownedEntries.length).toBeGreaterThan(0);
     // Bidder always outbids Decliner, so the first auctioned property should go to Bidder.
     expect(ownedEntries[0][1].ownerId).toBe(game.state.players[1].id);
+  });
+
+  it("executes a proposed trade with a rent-cap condition, and the cap is honored later", () => {
+    const BOARDWALK = 39;
+    const passthrough = {
+      chooseHouseToBuild: () => null,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      shouldBuyProperty: () => false,
+    };
+
+    const seller: Bot = {
+      name: "Seller",
+      ...passthrough,
+      proposeTrade: () => null,
+      evaluateTrade: () => true,
+    };
+    const buyer: Bot = {
+      name: "Buyer",
+      ...passthrough,
+      proposeTrade: (state, playerId) => {
+        if (state.ownership[BOARDWALK].ownerId !== "p0") return null;
+        return {
+          fromPlayerId: playerId,
+          toPlayerId: "p0",
+          offeredProperties: [],
+          offeredCash: 500,
+          offeredGetOutOfJailFreeCards: 0,
+          requestedProperties: [BOARDWALK],
+          requestedCash: 0,
+          requestedGetOutOfJailFreeCards: 0,
+          conditions: [{ spaceIndex: BOARDWALK, ownerId: playerId, protectedPlayerId: "p0", kind: "cap", capLevel: 3 }],
+        };
+      },
+      evaluateTrade: () => false,
+    };
+
+    // Fixed roll of 1+2=3 (never doubles) every time, so movement is fully predictable and
+    // free of incidental tax/card effects — lets the cash/rent assertions below be exact.
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2; // d1 = floor(0*6)+1 = 1, d2 = floor(0.2*6)+1 = 2
+    };
+
+    const game = new Game({ playerNames: ["Seller", "Buyer"], bots: [seller, buyer], rng: fixedRoll });
+    // Seed ownership directly rather than relying on random landing to get there.
+    game.state.ownership[BOARDWALK].ownerId = "p0";
+
+    game.playTurn(); // Seller: 0 -> 3 (Baltic Avenue, declined, stays unowned).
+    game.playTurn(); // Buyer: 0 -> 3 (same); proposes the trade, Seller accepts.
+
+    expect(game.state.ownership[BOARDWALK].ownerId).toBe("p1");
+    expect(game.state.players[1].cash).toBe(1000); // 1500 - 500
+    expect(game.state.players[0].cash).toBe(2000); // 1500 + 500
+    expect(game.state.tradeConditions).toEqual([
+      { spaceIndex: BOARDWALK, ownerId: "p1", protectedPlayerId: "p0", kind: "cap", capLevel: 3 },
+    ]);
+
+    // Build a hotel directly (bypassing the normal build flow) so the uncapped rent would be
+    // Boardwalk's top tier, then force Seller onto it next turn (3 -> 39 with the fixed roll)
+    // and confirm the charged rent respects the cap instead.
+    game.state.ownership[BOARDWALK].hotel = true;
+    game.state.players[0].position = 36;
+    game.playTurn(); // Seller: 36 -> 39 (Boardwalk).
+
+    const rentLine = game.state.log.find((line) => line.includes("rent for Boardwalk"));
+    expect(rentLine).toBeDefined();
+    expect(rentLine).toContain("$1400"); // capLevel 3 rent, not the $2000 hotel rent
+    expect(rentLine).not.toContain("$2000");
   });
 
   it("starts every player with $1500 and no properties owned", () => {

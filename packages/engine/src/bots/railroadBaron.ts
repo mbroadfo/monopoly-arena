@@ -1,6 +1,6 @@
 import { GROUP_MEMBERS } from "../board.js";
-import type { Bot, ColorGroup, FinanceAction, GameState, Ownable, PropertySpace } from "../types.js";
-import { ownedMortgaged, unmortgageCost } from "./shared.js";
+import type { Bot, ColorGroup, FinanceAction, GameState, Ownable, PropertySpace, TradeOffer } from "../types.js";
+import { ownedMortgaged, propertyValue, unmortgageCost } from "./shared.js";
 
 const INCOME_GROUPS = new Set<ColorGroup>(["railroad", "utility"]);
 
@@ -89,7 +89,61 @@ export function createRailroadBaronBot(options: RailroadBaronBotOptions = {}): B
       if (nextBid > ceiling || nextBid > player.cash) return null;
       return nextBid;
     },
+
+    proposeTrade(state: GameState, playerId: string): TradeOffer | null {
+      const player = state.players.find((p) => p.id === playerId)!;
+      const target = findIncomeTarget(state, playerId);
+      if (!target) return null;
+
+      const space = state.spaces[target.spaceIndex] as Ownable;
+      // Matches its auction ceiling for railroads/utilities.
+      const cashOffer = Math.round(space.price * 1.3);
+      if (player.cash - cashOffer < reserve) return null;
+
+      return {
+        fromPlayerId: playerId,
+        toPlayerId: target.ownerId,
+        offeredProperties: [],
+        offeredCash: cashOffer,
+        offeredGetOutOfJailFreeCards: 0,
+        requestedProperties: [target.spaceIndex],
+        requestedCash: 0,
+        requestedGetOutOfJailFreeCards: 0,
+        // No rent-cap sweetener here — conditions only apply to color properties.
+        conditions: [],
+      };
+    },
+
+    evaluateTrade(state: GameState, playerId: string, offer: TradeOffer): boolean {
+      const player = state.players.find((p) => p.id === playerId)!;
+      // Won't give up a railroad/utility regardless of price — that's the whole strategy.
+      const givingUpIncome = offer.requestedProperties.some((i) => isIncomeGroup(state.spaces[i] as { group?: ColorGroup }));
+      if (givingUpIncome) return false;
+
+      const gaining = offer.offeredCash + propertyValue(state, offer.offeredProperties);
+      const giving = offer.requestedCash + propertyValue(state, offer.requestedProperties);
+      const protectedByCondition = offer.conditions.some((c) => c.protectedPlayerId === playerId);
+      const effectiveGiving = protectedByCondition ? giving * 0.7 : giving;
+      const cashAfter = player.cash + offer.offeredCash - offer.requestedCash;
+      return gaining >= effectiveGiving && cashAfter >= reserve;
+    },
   };
+}
+
+/** Owns at least one but not all of a railroad/utility group, and someone else owns a missing
+ * piece — a direct check rather than findMonopolyCompletionTargets, which excludes these groups. */
+function findIncomeTarget(state: GameState, playerId: string): { spaceIndex: number; ownerId: string } | null {
+  for (const group of ["railroad", "utility"] as const) {
+    const indices = GROUP_MEMBERS[group];
+    const ownedByMe = indices.filter((i) => state.ownership[i].ownerId === playerId);
+    if (ownedByMe.length === 0 || ownedByMe.length === indices.length) continue;
+
+    const missing = indices.find((i) => state.ownership[i].ownerId !== playerId)!;
+    const missingOwnerId = state.ownership[missing].ownerId;
+    if (!missingOwnerId) continue;
+    return { spaceIndex: missing, ownerId: missingOwnerId };
+  }
+  return null;
 }
 
 /** Mortgages color properties before ever touching a railroad or utility. */

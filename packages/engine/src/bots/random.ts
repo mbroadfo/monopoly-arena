@@ -1,5 +1,6 @@
 import { GROUP_MEMBERS } from "../board.js";
-import type { Bot, FinanceAction, GameState, Ownable, PropertySpace } from "../types.js";
+import type { Bot, FinanceAction, GameState, Ownable, PropertySpace, TradeOffer } from "../types.js";
+import { propertyValue } from "./shared.js";
 
 const MIN_CASH_BUFFER = 50;
 
@@ -57,6 +58,17 @@ export function createRandomBot(): Bot {
       const nextBid = currentBid + 10;
       // Willing to bid up to face value, whatever it can afford.
       return nextBid <= space.price && nextBid <= player.cash ? nextBid : null;
+    },
+    proposeTrade(_state: GameState, _playerId: string): TradeOffer | null {
+      // Stays passive here too — no deliberate trade strategy, matching everything else about it.
+      return null;
+    },
+    evaluateTrade(state: GameState, _playerId: string, offer: TradeOffer): boolean {
+      // Accepts anything that isn't a clear net loss — no reserve check, matching its
+      // existing reckless build behavior.
+      const gaining = offer.offeredCash + propertyValue(state, offer.offeredProperties);
+      const giving = offer.requestedCash + propertyValue(state, offer.requestedProperties);
+      return gaining >= giving;
     },
   };
 }

@@ -1,6 +1,6 @@
 import { GROUP_MEMBERS } from "../board.js";
-import type { Bot, ColorGroup, FinanceAction, GameState, Ownable, PropertySpace } from "../types.js";
-import { mortgageCandidates, ownedMortgaged, unmortgageCost } from "./shared.js";
+import type { Bot, ColorGroup, FinanceAction, GameState, Ownable, PropertySpace, TradeOffer } from "../types.js";
+import { findMonopolyCompletionTargets, mortgageCandidates, ownedMortgaged, propertyValue, unmortgageCost } from "./shared.js";
 
 const PRIORITY_GROUPS = new Set<ColorGroup>(["orange", "red"]);
 const PRIORITY_RESERVE = 20;
@@ -89,6 +89,46 @@ export function createOrangeRushBot(options: OrangeRushBotOptions = {}): Bot {
       const nextBid = currentBid + 10;
       if (nextBid > ceiling || nextBid > player.cash) return null;
       return nextBid;
+    },
+
+    proposeTrade(state: GameState, playerId: string): TradeOffer | null {
+      const player = state.players.find((p) => p.id === playerId)!;
+      const targets = findMonopolyCompletionTargets(state, playerId).filter((t) =>
+        isPriorityGroup(state.spaces[t.spaceIndex] as { group?: ColorGroup }),
+      );
+      const target = targets[0];
+      if (!target) return null;
+
+      const space = state.spaces[target.spaceIndex] as PropertySpace;
+      // More aggressive than a flat cash offer — matches its auction premium.
+      const cashOffer = Math.round(space.price * 1.7);
+      if (player.cash - cashOffer < PRIORITY_RESERVE) return null;
+
+      return {
+        fromPlayerId: playerId,
+        toPlayerId: target.ownerId,
+        offeredProperties: [],
+        offeredCash: cashOffer,
+        offeredGetOutOfJailFreeCards: 0,
+        requestedProperties: [target.spaceIndex],
+        requestedCash: 0,
+        requestedGetOutOfJailFreeCards: 0,
+        conditions: [{ spaceIndex: target.spaceIndex, ownerId: playerId, protectedPlayerId: target.ownerId, kind: "cap", capLevel: 3 }],
+      };
+    },
+
+    evaluateTrade(state: GameState, playerId: string, offer: TradeOffer): boolean {
+      const player = state.players.find((p) => p.id === playerId)!;
+      // Won't give up an orange/red property regardless of price — that's the whole strategy.
+      const givingUpPriority = offer.requestedProperties.some((i) => isPriorityGroup(state.spaces[i] as { group?: ColorGroup }));
+      if (givingUpPriority) return false;
+
+      const gaining = offer.offeredCash + propertyValue(state, offer.offeredProperties);
+      const giving = offer.requestedCash + propertyValue(state, offer.requestedProperties);
+      const protectedByCondition = offer.conditions.some((c) => c.protectedPlayerId === playerId);
+      const effectiveGiving = protectedByCondition ? giving * 0.7 : giving;
+      const cashAfter = player.cash + offer.offeredCash - offer.requestedCash;
+      return gaining >= effectiveGiving && cashAfter >= reserve;
     },
   };
 }

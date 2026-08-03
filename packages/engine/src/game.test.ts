@@ -74,6 +74,32 @@ describe("Game", () => {
     expect(ownedEntries[0][1].ownerId).toBe(game.state.players[1].id);
   });
 
+  it("leaves a property unowned when nobody bids at auction", () => {
+    const passive: Bot = {
+      name: "A",
+      shouldBuyProperty: () => false,
+      chooseHouseToBuild: () => null,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseFinanceAction: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+      auctionBid: () => null,
+    };
+    const game = new Game({ playerNames: ["A", "B"], bots: [passive, { ...passive, name: "B" }], rng: mulberry32(7) });
+
+    let turns = 0;
+    while (turns < 20 && !game.state.log.some((l) => l.includes("No bids for"))) {
+      game.playTurn();
+      turns += 1;
+    }
+
+    expect(game.state.log.some((l) => l.includes("No bids for"))).toBe(true);
+    for (const record of Object.values(game.state.ownership)) {
+      expect(record.ownerId).toBeNull();
+    }
+  });
+
   it("executes a proposed trade with a rent-cap condition, and the cap is honored later", () => {
     const BOARDWALK = 39;
     const passthrough = {
@@ -120,6 +146,7 @@ describe("Game", () => {
     };
 
     const game = new Game({ playerNames: ["Seller", "Buyer"], bots: [seller, buyer], rng: fixedRoll });
+    game.state.currentPlayerIndex = 0; // force Seller to go first, independent of the starting roll
     // Seed ownership directly rather than relying on random landing to get there.
     game.state.ownership[BOARDWALK].ownerId = "p0";
 
@@ -144,6 +171,206 @@ describe("Game", () => {
     expect(rentLine).toBeDefined();
     expect(rentLine).toContain("$1400"); // capLevel 3 rent, not the $2000 hotel rent
     expect(rentLine).not.toContain("$2000");
+  });
+
+  it("waives rent for a set number of uses via a trade condition, then charges normally", () => {
+    // Unlike "cap" (used by NaiveBot/OrangeRushBot), no bot currently produces a "waive"
+    // condition — this exercises that code path directly rather than leaving it untested.
+    const BOARDWALK = 39;
+    const passthrough = {
+      chooseHouseToBuild: () => null,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      shouldBuyProperty: () => false,
+    };
+
+    const seller: Bot = { name: "Seller", ...passthrough, proposeTrade: () => null, evaluateTrade: () => true };
+    const buyer: Bot = {
+      name: "Buyer",
+      ...passthrough,
+      proposeTrade: (state, playerId) => {
+        if (state.ownership[BOARDWALK].ownerId !== "p0") return null;
+        return {
+          fromPlayerId: playerId,
+          toPlayerId: "p0",
+          offeredProperties: [],
+          offeredCash: 500,
+          offeredGetOutOfJailFreeCards: 0,
+          requestedProperties: [BOARDWALK],
+          requestedCash: 0,
+          requestedGetOutOfJailFreeCards: 0,
+          conditions: [{ spaceIndex: BOARDWALK, ownerId: playerId, protectedPlayerId: "p0", kind: "waive", usesRemaining: 2 }],
+        };
+      },
+      evaluateTrade: () => false,
+    };
+
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2; // every roll: 1+2 = 3
+    };
+
+    const game = new Game({ playerNames: ["Seller", "Buyer"], bots: [seller, buyer], rng: fixedRoll });
+    game.state.currentPlayerIndex = 0;
+    game.state.ownership[BOARDWALK].ownerId = "p0";
+
+    game.playTurn(); // Seller: proposes nothing.
+    game.playTurn(); // Buyer: proposes the trade, Seller accepts.
+    expect(game.state.tradeConditions).toEqual([
+      { spaceIndex: BOARDWALK, ownerId: "p1", protectedPlayerId: "p0", kind: "waive", usesRemaining: 2 },
+    ]);
+
+    // First landing: waived, one use consumed.
+    game.state.players[0].position = 36;
+    game.playTurn(); // Seller: 36 -> 39.
+    expect(game.state.log.at(-1)).toContain("owes no rent for Boardwalk (waived)");
+    expect(game.state.tradeConditions[0].usesRemaining).toBe(1);
+    game.playTurn(); // Buyer.
+
+    // Second landing: waived again, uses now exhausted.
+    game.state.players[0].position = 36;
+    game.playTurn(); // Seller.
+    expect(game.state.log.at(-1)).toContain("owes no rent for Boardwalk (waived)");
+    expect(game.state.tradeConditions[0].usesRemaining).toBe(0);
+    game.playTurn(); // Buyer.
+
+    // Third landing: no uses left — full normal rent applies (base rent, no houses/hotel: $50).
+    // Note: .at(-1), not .find() — the earlier waived-rent lines also contain "rent for Boardwalk".
+    game.state.players[0].position = 36;
+    game.playTurn(); // Seller.
+    expect(game.state.log.at(-1)).toContain("rent for Boardwalk");
+    expect(game.state.log.at(-1)).toContain("$50");
+  });
+
+  it("rejects building on a property that isn't the group's least-developed", () => {
+    const ORANGE = [16, 18, 19]; // St. James Place, Tennessee Avenue, New York Avenue
+    const bot: Bot = {
+      name: "Builder",
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+      // Always tries to build on New York Ave, which already has more houses than its siblings.
+      chooseHouseToBuild: () => 19,
+    };
+
+    const game = new Game({ playerNames: ["Builder"], bots: [bot], rng: mulberry32(1) });
+    for (const i of ORANGE) game.state.ownership[i].ownerId = "p0";
+    game.state.ownership[19].houses = 1; // ahead of its (still-unbuilt) siblings
+    game.state.players[0].cash = 5000;
+
+    game.playTurn();
+
+    expect(game.state.ownership[19].houses).toBe(1); // unchanged — rejected by even-building
+    expect(game.state.ownership[16].houses).toBe(0);
+    expect(game.state.ownership[18].houses).toBe(0);
+  });
+
+  it("sells houses back respecting the reverse (most-developed-first) rule", () => {
+    const ORANGE = [16, 18, 19];
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+    let sellTarget = 19;
+    const seller: Bot = {
+      name: "Seller",
+      ...passthrough,
+      chooseFinanceAction: () => ({ action: "sell-house", spaceIndex: sellTarget }),
+    };
+    const dummy: Bot = { name: "Dummy", ...passthrough, chooseFinanceAction: () => null };
+
+    const game = new Game({ playerNames: ["Seller", "Dummy"], bots: [seller, dummy], rng: mulberry32(1) });
+    game.state.currentPlayerIndex = 0; // force Seller to go first regardless of the starting roll
+    for (const i of ORANGE) game.state.ownership[i].ownerId = "p0";
+    game.state.ownership[16].houses = 2;
+    game.state.ownership[18].houses = 2;
+    game.state.ownership[19].houses = 1; // least-developed
+    const housesRemainingBefore = game.state.housesRemaining;
+    const cashBefore = game.state.players[0].cash;
+
+    game.playTurn(); // Seller tries to sell from 19 (least-developed) — rejected.
+    game.playTurn(); // Dummy.
+    expect(game.state.ownership[19].houses).toBe(1);
+    expect(game.state.housesRemaining).toBe(housesRemainingBefore);
+    expect(game.state.players[0].cash).toBe(cashBefore);
+
+    sellTarget = 16; // tied for most-developed — allowed.
+    game.playTurn(); // Seller.
+    game.playTurn(); // Dummy.
+    expect(game.state.ownership[16].houses).toBe(1);
+    expect(game.state.housesRemaining).toBe(housesRemainingBefore + 1);
+    expect(game.state.players[0].cash).toBe(cashBefore + 50); // St. James Place houseCost 100, half = 50
+
+    // 18 (still at 2) is now the sole max — selling 16 again is correctly rejected until 18
+    // catches down to tie with it, demonstrating the whole group has to come down evenly too.
+    sellTarget = 16;
+    game.playTurn(); // Seller: rejected, 18 is still the max.
+    game.playTurn(); // Dummy.
+    expect(game.state.ownership[16].houses).toBe(1);
+
+    // The finance phase keeps calling chooseFinanceAction until it's rejected or null (same
+    // loop mortgage/unmortgage already use) — since this bot always asks for 18 again, it
+    // sells twice in the same turn: 2 -> 1 (ties with its siblings) -> 0 (still tied, allowed
+    // again), only stopping on the third attempt once 19 becomes the sole remaining max.
+    sellTarget = 18;
+    game.playTurn(); // Seller: 18 drains 2 -> 0 in one turn.
+    game.playTurn(); // Dummy.
+    expect(game.state.ownership[18].houses).toBe(0);
+
+    // Now 16 and 19 are tied at 1 (the group's max) — selling 16 down to 0 is allowed.
+    sellTarget = 16;
+    game.playTurn(); // Seller: 16 (1 -> 0); a second attempt at 16 would now fail (19 is the max).
+    expect(game.state.ownership[16].houses).toBe(0);
+  });
+
+  it("charges double rent when a Chance card sends the player to the nearest owned railroad", () => {
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2; // every roll: d1=1, d2=2, total=3
+    };
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+    const drawer: Bot = { name: "Drawer", ...passthrough };
+    const owner: Bot = { name: "RailroadOwner", ...passthrough };
+
+    const game = new Game({ playerNames: ["Drawer", "RailroadOwner"], bots: [drawer, owner], rng: fixedRoll });
+    game.state.currentPlayerIndex = 0; // force Drawer to go first, independent of the starting roll
+    game.state.players[0].cash = 10000; // clear of any incidental card/tax effects along the way
+    // Pennsylvania Railroad (index 15) is the nearest railroad forward from Chance (index 7).
+    // RailroadOwner owns only this one, so normal rent would be $25 — doubled by the card, $50.
+    game.state.ownership[15].ownerId = "p1";
+
+    let rentLine: string | undefined;
+    for (let i = 0; i < 20 && !rentLine; i++) {
+      game.state.players[0].position = 4; // 4 + roll(3) = 7 (Chance) every time, however the deck shuffled.
+      game.playTurn(); // Drawer.
+      rentLine = game.state.log.find((line) => line.includes("rent for Pennsylvania Railroad"));
+      if (!rentLine) game.playTurn(); // RailroadOwner.
+    }
+
+    expect(rentLine).toBeDefined();
+    expect(rentLine).toContain("$50"); // double the normal $25 single-railroad rent
   });
 
   it("starts every player with $1500 and no properties owned", () => {

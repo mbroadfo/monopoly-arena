@@ -21,6 +21,9 @@ interface Deck {
   discard: Card[];
 }
 
+/** Special rent charged by the two "advance to nearest X" Chance cards, in place of the normal formula. */
+type RentOverride = "double-railroad" | "utility-x10";
+
 function draw(deck: Deck, rng: Rng): Card {
   if (deck.cards.length === 0) {
     deck.cards = shuffle(deck.discard, rng);
@@ -101,6 +104,32 @@ export class Game {
       doublesStreak: 0,
       tradeConditions: [],
     };
+    this.state.currentPlayerIndex = this.determineStartingPlayer();
+  }
+
+  /**
+   * Real rule: every player rolls once, highest total goes first; ties re-roll among just the
+   * tied players. Doesn't reorder the player array — turns still rotate through the original
+   * seating order (matching a real table's clockwise order), just starting from whoever won.
+   */
+  private determineStartingPlayer(): number {
+    let candidates = this.state.players.map((_, i) => i);
+    // Capped so a pathological (e.g. constant-output) RNG can't tie forever — after 20 rounds,
+    // just take whoever's still tied first rather than looping indefinitely.
+    for (let round = 0; candidates.length > 1 && round < 20; round++) {
+      const rolls = candidates.map((i) => {
+        const roll = rollDice(this.rng);
+        this.log(`${this.state.players[i].name} rolls ${roll.d1}+${roll.d2} (${roll.total}) to determine turn order.`);
+        return { index: i, total: roll.total };
+      });
+      const maxTotal = Math.max(...rolls.map((r) => r.total));
+      candidates = rolls.filter((r) => r.total === maxTotal).map((r) => r.index);
+      if (candidates.length > 1) {
+        this.log(`Tie between ${candidates.map((i) => this.state.players[i].name).join(", ")} — rolling again.`);
+      }
+    }
+    this.log(`${this.state.players[candidates[0]].name} goes first.`);
+    return candidates[0];
   }
 
   getSnapshot(): GameState {
@@ -238,13 +267,22 @@ export class Game {
     }
   }
 
+  /** Walks forward from a position (wrapping at 40) to the first space of the given type. */
+  private nearestSpaceOfType(fromPosition: number, type: "railroad" | "utility"): number {
+    for (let offset = 1; offset <= 40; offset++) {
+      const index = (fromPosition + offset) % 40;
+      if (BOARD[index].type === type) return index;
+    }
+    throw new Error(`no space of type ${type} on the board`); // unreachable given board composition
+  }
+
   private sendToJail(player: PlayerState) {
     player.position = JAIL_SPACE_INDEX;
     player.inJail = true;
     player.jailTurns = 0;
   }
 
-  private resolveSpace(player: PlayerState) {
+  private resolveSpace(player: PlayerState, rentOverride?: RentOverride) {
     const space = BOARD[player.position];
     this.log(`${player.name} lands on ${space.name}.`);
 
@@ -269,12 +307,12 @@ export class Game {
       case "property":
       case "railroad":
       case "utility":
-        this.resolveOwnableSpace(player, space.index);
+        this.resolveOwnableSpace(player, space.index, rentOverride);
         return;
     }
   }
 
-  private resolveOwnableSpace(player: PlayerState, spaceIndex: number) {
+  private resolveOwnableSpace(player: PlayerState, spaceIndex: number, rentOverride?: RentOverride) {
     const record = this.state.ownership[spaceIndex];
     const space = BOARD[spaceIndex] as PropertySpace | Extract<(typeof BOARD)[number], { type: "railroad" | "utility" }>;
     if (record.ownerId === null) {
@@ -293,7 +331,7 @@ export class Game {
     if (record.ownerId === player.id || record.mortgaged) return;
 
     const owner = this.state.players.find((p) => p.id === record.ownerId)!;
-    const rent = this.calculateRent(space, record, owner, player);
+    const rent = this.calculateRent(space, record, owner, player, rentOverride);
     if (rent === 0 && space.type === "property") {
       this.log(`${player.name} owes no rent for ${space.name} (waived).`);
       return;
@@ -348,7 +386,19 @@ export class Game {
     record: OwnershipRecord,
     owner: PlayerState,
     payer: PlayerState,
+    rentOverride?: RentOverride,
   ): number {
+    // The two "advance to nearest X" Chance cards charge a special rent instead of the normal
+    // formula: double for a railroad, 10x the dice roll for a utility, regardless of how many
+    // the owner has.
+    if (rentOverride === "double-railroad" && space.type === "railroad") {
+      const ownedCount = GROUP_MEMBERS.railroad.filter((i) => this.state.ownership[i].ownerId === owner.id).length;
+      return 25 * Math.pow(2, ownedCount - 1) * 2;
+    }
+    if (rentOverride === "utility-x10" && space.type === "utility") {
+      const roll = rollDice(this.rng);
+      return roll.total * 10;
+    }
     if (space.type === "railroad") {
       const ownedCount = GROUP_MEMBERS.railroad.filter((i) => this.state.ownership[i].ownerId === owner.id).length;
       return 25 * Math.pow(2, ownedCount - 1);
@@ -399,6 +449,32 @@ export class Game {
       }
       case "advance-spaces":
         this.movePlayer(player, effect.spaces);
+        this.resolveSpace(player);
+        return;
+      case "advance-to-nearest-railroad": {
+        const before = player.position;
+        player.position = this.nearestSpaceOfType(before, "railroad");
+        if (player.position < before) {
+          player.cash += GO_SALARY;
+          this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
+        }
+        this.resolveSpace(player, "double-railroad");
+        return;
+      }
+      case "advance-to-nearest-utility": {
+        const before = player.position;
+        player.position = this.nearestSpaceOfType(before, "utility");
+        if (player.position < before) {
+          player.cash += GO_SALARY;
+          this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
+        }
+        this.resolveSpace(player, "utility-x10");
+        return;
+      }
+      case "go-back-spaces":
+        // Never awards GO salary, even if it would wrap past 0 — matches the real rule, and
+        // sidesteps movePlayer's forward-only pass-GO detection and JS's negative-modulo quirk.
+        player.position = ((player.position - effect.spaces) % 40 + 40) % 40;
         this.resolveSpace(player);
         return;
       case "collect":
@@ -516,12 +592,48 @@ export class Game {
       if (choice.action === "mortgage") {
         if (!this.canMortgage(player.id, choice.spaceIndex)) return;
         this.doMortgage(player, choice.spaceIndex);
-      } else {
+      } else if (choice.action === "unmortgage") {
         if (!this.canUnmortgage(player.id, choice.spaceIndex)) return;
         if (player.cash < this.unmortgageCost(choice.spaceIndex)) return;
         this.doUnmortgage(player, choice.spaceIndex);
+      } else {
+        if (!this.trySellHouse(player, choice.spaceIndex)) return;
       }
     }
+  }
+
+  /**
+   * Sells one house (or a hotel, reverting to 4 houses) back to the bank at half its build cost —
+   * the only way to bring a property's improvement level down to 0, which mortgaging and trading
+   * both require. Mirrors tryBuild: must sell from the group's most-developed propert(y/ies) first,
+   * the reverse of even-building's "build the least-developed first."
+   */
+  private trySellHouse(player: PlayerState, spaceIndex: number): boolean {
+    const space = BOARD[spaceIndex];
+    if (space.type !== "property") return false;
+    const record = this.state.ownership[spaceIndex];
+    if (record.ownerId !== player.id) return false;
+    if (record.houses === 0 && !record.hotel) return false;
+
+    const groupIndices = GROUP_MEMBERS[space.group];
+    const maxLevel = Math.max(...groupIndices.map((i) => this.improvementLevel(this.state.ownership[i])));
+    if (this.improvementLevel(record) < maxLevel) return false;
+
+    const saleValue = Math.floor(space.houseCost / 2);
+    if (record.hotel) {
+      if (this.state.housesRemaining < 4) return false; // not enough house pieces to revert to
+      record.hotel = false;
+      record.houses = 4;
+      this.state.housesRemaining -= 4;
+      this.state.hotelsRemaining += 1;
+      this.log(`${player.name} sells the hotel on ${space.name} for $${saleValue}.`);
+    } else {
+      record.houses -= 1;
+      this.state.housesRemaining += 1;
+      this.log(`${player.name} sells a house on ${space.name} (${record.houses}/4) for $${saleValue}.`);
+    }
+    player.cash += saleValue;
+    return true;
   }
 
   /** One trade proposal attempt per player per turn — no counter-offer negotiation. */
@@ -631,13 +743,26 @@ export class Game {
     }
   }
 
+  /** 0-4 houses, 5 = hotel — a single comparable scale for the even-building rule. */
+  private improvementLevel(record: OwnershipRecord): number {
+    return record.hotel ? 5 : record.houses;
+  }
+
   private tryBuild(player: PlayerState, spaceIndex: number): boolean {
     const space = BOARD[spaceIndex];
     if (space.type !== "property") return false;
     const record = this.state.ownership[spaceIndex];
     if (record.ownerId !== player.id || record.mortgaged) return false;
-    const hasMonopoly = GROUP_MEMBERS[space.group].every((i) => this.state.ownership[i].ownerId === player.id);
+    const groupIndices = GROUP_MEMBERS[space.group];
+    const hasMonopoly = groupIndices.every((i) => this.state.ownership[i].ownerId === player.id);
     if (!hasMonopoly || record.hotel) return false;
+    // A monopoly must be fully active to build on — any mortgaged sibling blocks the whole group.
+    if (groupIndices.some((i) => this.state.ownership[i].mortgaged)) return false;
+    // Even-building: only the least-developed propert(y/ies) in the group may be built on. This
+    // also gives the "hotel requires every property at 4 houses" rule for free — a property at 4
+    // only qualifies once every sibling has caught up to the shared minimum of 4.
+    const minLevel = Math.min(...groupIndices.map((i) => this.improvementLevel(this.state.ownership[i])));
+    if (this.improvementLevel(record) > minLevel) return false;
 
     if (record.houses < 4) {
       if (this.state.housesRemaining <= 0 || player.cash < space.houseCost) return false;

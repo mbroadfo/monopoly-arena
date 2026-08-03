@@ -98,7 +98,7 @@ export interface DiceRoll {
   isDouble: boolean;
 }
 
-export type FinanceAction = { action: "mortgage" | "unmortgage"; spaceIndex: number };
+export type FinanceAction = { action: "mortgage" | "unmortgage" | "sell-house"; spaceIndex: number };
 
 /**
  * A rent side-agreement attached to a trade, tied to the two players who made the deal —
@@ -143,7 +143,12 @@ export interface BotDecisions {
    * to give up (triggering bankruptcy). Called repeatedly until the shortfall is covered.
    */
   raiseCash(state: GameState, playerId: string, amountNeeded: number): number | null;
-  /** Called once per turn after building; may mortgage or unmortgage at most one property per call. */
+  /**
+   * Called once per turn after building; may mortgage, unmortgage, or sell one house/hotel back
+   * to the bank per call. A property must have its houses/hotel sold off (down to 0) before it
+   * can be mortgaged or traded — selling from the same turn's earlier call is fair game, since
+   * this is called repeatedly.
+   */
   chooseFinanceAction(state: GameState, playerId: string): FinanceAction | null;
   /**
    * Called during an auction (triggered when a player declines to buy a property they land on).

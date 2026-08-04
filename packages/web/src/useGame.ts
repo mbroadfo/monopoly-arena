@@ -168,6 +168,7 @@ export function useGame(initialBotIndices: number[] = [0, 1, 2, 3]) {
   const [playing, setPlaying] = useState(false);
   const [speedMs, setSpeedMs] = useState(400);
   const [animating, setAnimating] = useState(false);
+  const [animationEnabled, setAnimationEnabled] = useState(true);
   const [fadingPlayerId, setFadingPlayerId] = useState<string | null>(null);
   const isAnimatingRef = useRef(false);
 
@@ -185,7 +186,7 @@ export function useGame(initialBotIndices: number[] = [0, 1, 2, 3]) {
     game.playTurn();
     const after = game.getSnapshot();
 
-    const timings = animationTimings(speedMs);
+    const timings = animationEnabled ? animationTimings(speedMs) : null;
     if (timings && after.turn !== before.turn && after.moves.length > 0) {
       isAnimatingRef.current = true;
       setAnimating(true);
@@ -212,7 +213,7 @@ export function useGame(initialBotIndices: number[] = [0, 1, 2, 3]) {
         setScrubTurn(after.turn); // stay pinned to the live edge as new turns land
       }
     }
-  }, [speedMs]);
+  }, [speedMs, animationEnabled]);
 
   /** Instant jump to any past turn — no animation, so scanning a long game stays snappy. */
   const scrubTo = useCallback(
@@ -238,7 +239,7 @@ export function useGame(initialBotIndices: number[] = [0, 1, 2, 3]) {
       if (delta === 1) {
         const before = toDisplayState(turnRecords[scrubTurn], liveState);
         const after = toDisplayState(turnRecords[target], liveState);
-        const timings = animationTimings(speedMs);
+        const timings = animationEnabled ? animationTimings(speedMs) : null;
         if (timings && after.moves.length > 0) {
           isAnimatingRef.current = true;
           setAnimating(true);
@@ -250,7 +251,7 @@ export function useGame(initialBotIndices: number[] = [0, 1, 2, 3]) {
       }
       setScrubTurn(target);
     },
-    [scrubTurn, turnRecords, liveState, speedMs],
+    [scrubTurn, turnRecords, liveState, speedMs, animationEnabled],
   );
 
   const reset = useCallback((botIndices: number[]) => {
@@ -283,6 +284,8 @@ export function useGame(initialBotIndices: number[] = [0, 1, 2, 3]) {
     speedMs,
     setSpeedMs,
     animating,
+    animationEnabled,
+    setAnimationEnabled,
     fadingPlayerId,
     scrubTurn,
     latestTurn: liveState.turn,

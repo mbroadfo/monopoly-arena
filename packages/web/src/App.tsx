@@ -19,6 +19,8 @@ export function App() {
     speedMs,
     setSpeedMs,
     animating,
+    animationEnabled,
+    setAnimationEnabled,
     fadingPlayerId,
     scrubTurn,
     latestTurn,
@@ -44,7 +46,7 @@ export function App() {
         </div>
 
         <div className="board-column">
-          <Board state={state} fadingPlayerId={fadingPlayerId} />
+          <Board state={state} fadingPlayerId={fadingPlayerId} animationEnabled={animationEnabled} />
         </div>
 
         <div className="side-column">
@@ -76,6 +78,14 @@ export function App() {
             <button className="secondary" onClick={() => reset(botIndices)}>
               Reset
             </button>
+            <label className="animate-toggle">
+              <input
+                type="checkbox"
+                checked={animationEnabled}
+                onChange={(e) => setAnimationEnabled(e.target.checked)}
+              />
+              Animate movement
+            </label>
           </div>
           <div className="bot-select">
             {botIndices.map((choice, i) => (

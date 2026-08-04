@@ -153,7 +153,15 @@ const TOKEN_SLOT_OFFSETS: [number, number][] = [
   [0, 11],
 ];
 
-export function Board({ state, fadingPlayerId }: { state: GameState; fadingPlayerId?: string | null }) {
+export function Board({
+  state,
+  fadingPlayerId,
+  animationEnabled = true,
+}: {
+  state: GameState;
+  fadingPlayerId?: string | null;
+  animationEnabled?: boolean;
+}) {
   return (
     <div className="board-wrap">
       <div className="board-grid" style={{ gridTemplateColumns: BOARD_TEMPLATE, gridTemplateRows: BOARD_TEMPLATE }}>
@@ -250,7 +258,7 @@ export function Board({ state, fadingPlayerId }: { state: GameState; fadingPlaye
             return (
               <div
                 key={p.id}
-                className={`token ${p.bankrupt ? "bankrupt" : ""} ${p.id === fadingPlayerId ? "hidden" : ""}`}
+                className={`token ${p.bankrupt ? "bankrupt" : ""} ${p.id === fadingPlayerId ? "hidden" : ""} ${animationEnabled ? "" : "no-transition"}`}
                 title={p.name}
                 style={{
                   left: `${left}%`,

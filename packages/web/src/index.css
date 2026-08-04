@@ -359,6 +359,13 @@ body {
   transition: left 90ms linear, top 90ms linear, opacity 140ms ease;
 }
 
+/* With animation disabled, position updates must be an instant jump, not a smoothly-tweened
+   CSS transition — the JS-side hop-by-hop animation is only half of "animated"; the browser
+   would otherwise still glide between old/new left/top on every state update regardless. */
+.token.no-transition {
+  transition: none;
+}
+
 /* White stroke reads clearly against every PLAYER_COLORS badge, including the light yellow
    one — the dark drop-shadow adds a contrast edge for that case specifically. */
 .token-icon {
@@ -515,6 +522,15 @@ body {
 .controls button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.animate-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.85rem;
+  color: #ccc;
+  cursor: pointer;
 }
 
 .bot-select {

@@ -1,6 +1,16 @@
 import { Lightbulb, ShowerHead, Trophy } from "lucide-react";
 import type { GameState, Space } from "@monopoly-arena/engine";
-import { EDGE_DEPTH_RATIO, GROUP_COLORS, PLAYER_COLORS, TOKEN_ICONS, isCorner, spaceToGrid, spaceToPercent } from "./boardLayout";
+import {
+  EDGE_DEPTH_RATIO,
+  GROUP_COLORS,
+  JAIL_SPACE_INDEX,
+  PLAYER_COLORS,
+  TOKEN_ICONS,
+  isCorner,
+  jailZoneAnchor,
+  spaceToGrid,
+  spaceToPercent,
+} from "./boardLayout";
 import railroadIcon from "./assets/railroad.png";
 import communityChestIcon from "./assets/community-chest.png";
 import goIcon from "./assets/go.png";
@@ -252,7 +262,12 @@ export function Board({
 
         <div className="token-layer">
           {state.players.map((p, i) => {
-            const { left, top } = spaceToPercent(p.position);
+            // Jail is really two spots: the inset cell (upper-right, bars) for tokens actually
+            // imprisoned, and the outer "Just Visiting" strip (left/bottom edges) for tokens that
+            // either landed there without going to jail or are just passing through mid-move —
+            // both of those are "position === 10 but not inJail", same zone either way.
+            const { left, top } =
+              p.position === JAIL_SPACE_INDEX ? jailZoneAnchor(p.inJail ? "cell" : "visiting") : spaceToPercent(p.position);
             const [dx, dy] = TOKEN_SLOT_OFFSETS[i % TOKEN_SLOT_OFFSETS.length];
             const Icon = TOKEN_ICONS[i % TOKEN_ICONS.length];
             return (

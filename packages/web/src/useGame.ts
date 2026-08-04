@@ -55,6 +55,15 @@ function withPlayerPosition(snapshot: GameState, playerId: string, position: num
   return { ...snapshot, players: snapshot.players.map((p) => (p.id === playerId ? { ...p, position } : p)) };
 }
 
+/** Every "teleport" MoveEvent the engine produces is a jail send (see sendToJail in game.ts —
+ * the only place that pushes one), so the reveal frame needs inJail patched to true alongside
+ * the position, not just position alone — otherwise the board briefly renders the token in the
+ * Jail tile's "Just Visiting" zone instead of the jail cell for one frame, since Board.tsx picks
+ * the zone based on inJail. */
+function withPlayerJailed(snapshot: GameState, playerId: string, position: number): GameState {
+  return { ...snapshot, players: snapshot.players.map((p) => (p.id === playerId ? { ...p, position, inJail: true } : p)) };
+}
+
 /** Intermediate tile indices from `from` to `to` (exclusive/inclusive respectively), stepping
  * one space at a time so the token visibly hops around the board rather than jumping straight
  * there. Capped at a full lap so an accidental from === to can't loop forever. */
@@ -86,7 +95,7 @@ async function animateTurn(
     if (move.type === "teleport") {
       onFade(move.playerId);
       await sleep(timings.fadeMs);
-      working = withPlayerPosition(working, move.playerId, move.to);
+      working = withPlayerJailed(working, move.playerId, move.to);
       onFrame(working);
       onFade(null);
     } else {

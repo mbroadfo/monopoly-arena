@@ -41,6 +41,40 @@ export function spaceToPercent(index: number): { left: number; top: number } {
   return { left, top };
 }
 
+/** A space's full bounding box as 0-100 percentages of the board — the general form
+ * spaceToPercent's center point is a special case of, needed for placing something at a specific
+ * spot *within* a tile (e.g. the Jail cell) rather than dead center. */
+function spaceBounds(index: number): { left: number; top: number; right: number; bottom: number } {
+  const { col, row } = spaceToGrid(index);
+  const left = (trackStart(col) / TOTAL_UNITS) * 100;
+  const right = ((trackStart(col) + trackSize(col)) / TOTAL_UNITS) * 100;
+  const top = (trackStart(row) / TOTAL_UNITS) * 100;
+  const bottom = ((trackStart(row) + trackSize(row)) / TOTAL_UNITS) * 100;
+  return { left, top, right, bottom };
+}
+
+// Must match the engine's private JAIL_SPACE_INDEX (game.ts) — not exported from the engine
+// package, so duplicated here as the one place the web layer needs the raw index.
+export const JAIL_SPACE_INDEX = 10;
+
+// The Jail tile has two real sub-areas (see jail.png / corner-image-contain in Board.tsx): a
+// small inset cell — upper-right, bars visible — for tokens actually in jail, and an outer
+// L-shaped "Just Visiting" strip along the left and bottom edges for tokens that merely landed
+// there or are passing through. Fractions are eyeballed against the card art, not measured.
+const JAIL_CELL_FRACTION = { x: 0.68, y: 0.32 };
+const JAIL_VISITING_FRACTION = { x: 0.28, y: 0.76 };
+
+/** Anchor point (0-100 board percentage) for a token that's either in the Jail cell or just
+ * visiting — see JAIL_CELL_FRACTION/JAIL_VISITING_FRACTION. */
+export function jailZoneAnchor(zone: "cell" | "visiting"): { left: number; top: number } {
+  const bounds = spaceBounds(JAIL_SPACE_INDEX);
+  const frac = zone === "cell" ? JAIL_CELL_FRACTION : JAIL_VISITING_FRACTION;
+  return {
+    left: bounds.left + (bounds.right - bounds.left) * frac.x,
+    top: bounds.top + (bounds.bottom - bounds.top) * frac.y,
+  };
+}
+
 export const GROUP_COLORS: Record<ColorGroup, string> = {
   brown: "#8b4513",
   lightblue: "#aee2f0",

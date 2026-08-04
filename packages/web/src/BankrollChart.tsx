@@ -9,7 +9,18 @@ const MARGIN = { top: 10, right: 10, bottom: 18, left: 40 };
 const PLOT_W = WIDTH - MARGIN.left - MARGIN.right;
 const PLOT_H = HEIGHT - MARGIN.top - MARGIN.bottom;
 
-export function BankrollChart({ history, players }: { history: BankrollPoint[]; players: PlayerState[] }) {
+export function BankrollChart({
+  history,
+  players,
+  activeTurn,
+}: {
+  history: BankrollPoint[];
+  players: PlayerState[];
+  /** The turn currently shown elsewhere in the UI (e.g. the timeline scrubber) — rendered as a
+   * persistent marker, distinct from the mouse-hover crosshair/tooltip below. `history`'s index
+   * lines up 1:1 with turn number, so no lookup is needed beyond a bounds check. */
+  activeTurn?: number;
+}) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
@@ -37,6 +48,8 @@ export function BankrollChart({ history, players }: { history: BankrollPoint[]; 
 
   const hoverPoint = hoverIndex !== null ? history[hoverIndex] : null;
   const hoverX = hoverPoint ? MARGIN.left + (hoverPoint.turn / maxTurn) * PLOT_W : null;
+  const activeIndex = activeTurn !== undefined && activeTurn >= 0 && activeTurn < history.length ? activeTurn : null;
+  const activeX = activeIndex !== null ? MARGIN.left + (history[activeIndex].turn / maxTurn) * PLOT_W : null;
   const gridValues = [0, 0.5, 1].map((f) => Math.round(maxCash * f));
   // Flip the tooltip to the left once it would run past the right edge of the plot.
   const tooltipOnLeft = hoverX !== null && hoverX > MARGIN.left + PLOT_W * 0.6;
@@ -87,6 +100,21 @@ export function BankrollChart({ history, players }: { history: BankrollPoint[]; 
             strokeLinecap="round"
           />
         ))}
+
+        {activeX !== null && (
+          <line x1={activeX} y1={MARGIN.top} x2={activeX} y2={MARGIN.top + PLOT_H} className="bankroll-active-crosshair" />
+        )}
+        {activeIndex !== null &&
+          linePoints.map((points, i) => (
+            <circle
+              key={players[i].id}
+              cx={points[activeIndex].x}
+              cy={points[activeIndex].y}
+              r={3.5}
+              className="bankroll-active-dot"
+              fill={PLAYER_COLORS[i % PLAYER_COLORS.length]}
+            />
+          ))}
 
         {hoverX !== null && (
           <line x1={hoverX} y1={MARGIN.top} x2={hoverX} y2={MARGIN.top + PLOT_H} className="bankroll-crosshair" />

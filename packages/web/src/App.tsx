@@ -4,19 +4,43 @@ import { PlayerPanel } from "./PlayerPanel";
 import { LogFeed } from "./LogFeed";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { BankrollChart } from "./BankrollChart";
+import { Timeline } from "./Timeline";
 import { BOT_CHOICES, useGame } from "./useGame";
 
 export function App() {
   const [botIndices, setBotIndices] = useState([0, 1, 2, 3]);
-  const { state, history, step, reset, playing, setPlaying, speedMs, setSpeedMs, animating, fadingPlayerId } =
-    useGame(botIndices);
+  const {
+    state,
+    history,
+    step,
+    reset,
+    playing,
+    setPlaying,
+    speedMs,
+    setSpeedMs,
+    animating,
+    fadingPlayerId,
+    scrubTurn,
+    latestTurn,
+    isLive,
+    scrubTo,
+    stepTurn,
+  } = useGame(botIndices);
 
   return (
     <div className="app">
       <div className="layout">
         <div className="properties-column">
           <PropertiesPanel state={state} />
-          <BankrollChart history={history} players={state.players} />
+          <BankrollChart history={history} players={state.players} activeTurn={scrubTurn} />
+          <Timeline
+            scrubTurn={scrubTurn}
+            latestTurn={latestTurn}
+            isLive={isLive}
+            disabled={animating}
+            onScrub={scrubTo}
+            onStep={stepTurn}
+          />
         </div>
 
         <div className="board-column">
@@ -32,10 +56,10 @@ export function App() {
           <PlayerPanel state={state} />
 
           <div className="controls">
-            <button onClick={step} disabled={state.winnerId !== null || animating}>
+            <button onClick={step} disabled={state.winnerId !== null || animating || !isLive}>
               Step
             </button>
-            <button onClick={() => setPlaying((p) => !p)} disabled={state.winnerId !== null}>
+            <button onClick={() => setPlaying((p) => !p)} disabled={state.winnerId !== null || !isLive}>
               {playing ? "Pause" : "Auto-play"}
             </button>
             <label>

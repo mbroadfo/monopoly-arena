@@ -177,12 +177,13 @@ export class Game {
     this.state.doublesStreak = 0;
     this.state.moves = [];
 
+    let shouldRollNormally = true;
     if (player.inJail) {
-      this.handleJailTurn(player);
+      shouldRollNormally = this.handleJailTurn(player);
       if (player.bankrupt || this.isGameOver()) return;
     }
 
-    let keepRolling = true;
+    let keepRolling = shouldRollNormally;
     while (keepRolling && !player.bankrupt) {
       keepRolling = this.rollAndMove(player);
       if (this.isGameOver()) return;
@@ -195,21 +196,28 @@ export class Game {
     this.advanceToNextPlayer();
   }
 
-  private handleJailTurn(player: PlayerState) {
+  /**
+   * Returns true if the player should still take a normal roll-and-move this same turn — only
+   * true for the "paid/used a card to get out" branches, which release the player *before* they'd
+   * roll, matching the real rule that you get a normal turn immediately after. The other branches
+   * either already moved the player themselves (the releasing roll doubles, or the forced-out
+   * roll after serving max time) or leave them in jail — either way, no roll-and-move follows.
+   */
+  private handleJailTurn(player: PlayerState): boolean {
     const bot = this.bots.get(player.id)!;
     if (player.getOutOfJailFreeCards > 0 && bot.shouldPayToLeaveJail(this.getSnapshot(), player.id)) {
       player.getOutOfJailFreeCards -= 1;
       player.inJail = false;
       player.jailTurns = 0;
       this.log(`${player.name} uses a Get Out of Jail Free card.`);
-      return;
+      return true;
     }
     if (bot.shouldPayToLeaveJail(this.getSnapshot(), player.id) && player.cash >= JAIL_FINE) {
       player.cash -= JAIL_FINE;
       player.inJail = false;
       player.jailTurns = 0;
       this.log(`${player.name} pays $${JAIL_FINE} to leave jail.`);
-      return;
+      return true;
     }
     const roll = rollDice(this.rng);
     this.log(`${player.name} (in jail) rolls ${roll.d1}+${roll.d2}.`);
@@ -219,7 +227,7 @@ export class Game {
       this.log(`${player.name} rolls doubles and leaves jail.`);
       this.movePlayer(player, roll.total);
       this.resolveSpace(player);
-      return;
+      return false;
     }
     player.jailTurns += 1;
     if (player.jailTurns >= MAX_JAIL_TURNS) {
@@ -227,16 +235,17 @@ export class Game {
         player.cash -= JAIL_FINE;
       } else {
         this.handleBankruptcy(player, null);
-        return;
+        return false;
       }
       player.inJail = false;
       player.jailTurns = 0;
       this.log(`${player.name} has served max jail time and pays $${JAIL_FINE}.`);
       this.movePlayer(player, roll.total);
       this.resolveSpace(player);
-    } else {
-      this.log(`${player.name} stays in jail (turn ${player.jailTurns}/${MAX_JAIL_TURNS}).`);
+      return false;
     }
+    this.log(`${player.name} stays in jail (turn ${player.jailTurns}/${MAX_JAIL_TURNS}).`);
+    return false;
   }
 
   /** Rolls, moves, and resolves the landing space. Returns true if the player rolled doubles and should go again. */

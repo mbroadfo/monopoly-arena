@@ -1,5 +1,5 @@
 import type { GameState } from "@monopoly-arena/engine";
-import { PLAYER_COLORS } from "./boardLayout";
+import { PLAYER_COLORS, TOKEN_ICONS } from "./boardLayout";
 
 export function PlayerPanel({ state }: { state: GameState }) {
   return (
@@ -7,9 +7,12 @@ export function PlayerPanel({ state }: { state: GameState }) {
       {state.players.map((player, i) => {
         const ownedCount = Object.values(state.ownership).filter((r) => r.ownerId === player.id).length;
         const isCurrent = i === state.currentPlayerIndex && !state.winnerId;
+        const Icon = TOKEN_ICONS[i % TOKEN_ICONS.length];
         return (
           <div key={player.id} className={`player-card ${player.bankrupt ? "bankrupt" : ""} ${isCurrent ? "current" : ""}`}>
-            <div className="player-swatch" style={{ background: PLAYER_COLORS[i % PLAYER_COLORS.length] }} />
+            <div className="player-swatch" style={{ background: PLAYER_COLORS[i % PLAYER_COLORS.length] }}>
+              <Icon size={17} strokeWidth={2.5} />
+            </div>
             <div className="player-info">
               <div className="player-name">
                 {player.name} {isCurrent && "▶"}

@@ -114,6 +114,36 @@ function historyPoint(state: GameState): BankrollPoint {
   return { turn: state.turn, cash: state.players.map((p) => p.cash) };
 }
 
+/**
+ * Everything needed to reconstruct a past turn's display state, minus `spaces` (a constant
+ * reference to BOARD, never needs per-turn storage) and `log` (replaced by `logLength` — the
+ * engine's log is append-only, so the live state's full log is always a superset of any earlier
+ * turn's log; slicing it beats storing a redundant copy of it in every single turn record, which
+ * would be O(turns²) memory over a long game).
+ */
+interface TurnRecord {
+  turn: number;
+  ownership: GameState["ownership"];
+  players: GameState["players"];
+  currentPlayerIndex: number;
+  housesRemaining: number;
+  hotelsRemaining: number;
+  winnerId: string | null;
+  doublesStreak: number;
+  tradeConditions: GameState["tradeConditions"];
+  moves: GameState["moves"];
+  logLength: number;
+}
+
+function toTurnRecord(state: GameState): TurnRecord {
+  const { spaces: _spaces, log, ...rest } = state;
+  return { ...rest, logLength: log.length };
+}
+
+function toDisplayState(record: TurnRecord, live: GameState): GameState {
+  return { ...record, spaces: live.spaces, log: live.log.slice(0, record.logLength) };
+}
+
 export const BOT_CHOICES: BotChoice[] = [
   { label: "Naive (buys + builds within reserve)", create: () => createNaiveBot() },
   { label: "Random (buys everything, builds with thin buffer)", create: () => createRandomBot() },
@@ -130,13 +160,19 @@ function newGame(botIndices: number[]): Game {
 
 export function useGame(initialBotIndices: number[] = [0, 1, 2, 3]) {
   const gameRef = useRef<Game>(newGame(initialBotIndices));
-  const [state, setState] = useState<GameState>(() => gameRef.current.getSnapshot());
-  const [history, setHistory] = useState<BankrollPoint[]>(() => [historyPoint(state)]);
+  const [liveState, setLiveState] = useState<GameState>(() => gameRef.current.getSnapshot());
+  const [history, setHistory] = useState<BankrollPoint[]>(() => [historyPoint(liveState)]);
+  const [turnRecords, setTurnRecords] = useState<TurnRecord[]>(() => [toTurnRecord(liveState)]);
+  const [scrubTurn, setScrubTurn] = useState(0);
+  const [displayOverride, setDisplayOverride] = useState<GameState | null>(null);
   const [playing, setPlaying] = useState(false);
   const [speedMs, setSpeedMs] = useState(400);
   const [animating, setAnimating] = useState(false);
   const [fadingPlayerId, setFadingPlayerId] = useState<string | null>(null);
   const isAnimatingRef = useRef(false);
+
+  const isLive = scrubTurn === liveState.turn;
+  const state = displayOverride ?? (isLive ? liveState : toDisplayState(turnRecords[scrubTurn], liveState));
 
   const step = useCallback(async () => {
     if (isAnimatingRef.current) return; // ignore an overlapping auto-play tick or manual double-click
@@ -158,7 +194,7 @@ export function useGame(initialBotIndices: number[] = [0, 1, 2, 3]) {
         after,
         timings,
         (snapshot) => {
-          if (gameRef.current === game) setState(snapshot); // bail if reset() swapped games mid-animation
+          if (gameRef.current === game) setDisplayOverride(snapshot); // bail if reset() swapped games mid-animation
         },
         (playerId) => {
           if (gameRef.current === game) setFadingPlayerId(playerId);
@@ -168,19 +204,66 @@ export function useGame(initialBotIndices: number[] = [0, 1, 2, 3]) {
       setAnimating(false);
     }
     if (gameRef.current === game) {
-      setState(after);
+      setDisplayOverride(null);
+      setLiveState(after);
       setHistory((h) => [...h, historyPoint(after)]);
+      if (after.turn !== before.turn) {
+        setTurnRecords((records) => [...records, toTurnRecord(after)]);
+        setScrubTurn(after.turn); // stay pinned to the live edge as new turns land
+      }
     }
   }, [speedMs]);
+
+  /** Instant jump to any past turn — no animation, so scanning a long game stays snappy. */
+  const scrubTo = useCallback(
+    (turn: number) => {
+      if (isAnimatingRef.current) return; // an in-flight single-step replay owns displayOverride
+      setPlaying(false); // dragging the timeline pauses live playback, like a video scrubber
+      setDisplayOverride(null);
+      setScrubTurn(Math.max(0, Math.min(turn, turnRecords.length - 1)));
+    },
+    [turnRecords.length],
+  );
+
+  /** Moves the scrub position by exactly one turn. Forward replays that turn's actual movement
+   * (reusing the same animateTurn used for live play); backward just snaps — there's no
+   * meaningful reverse of a dice roll to animate. */
+  const stepTurn = useCallback(
+    async (delta: 1 | -1) => {
+      if (isAnimatingRef.current) return;
+      const target = scrubTurn + delta;
+      if (target < 0 || target >= turnRecords.length) return;
+      setPlaying(false);
+
+      if (delta === 1) {
+        const before = toDisplayState(turnRecords[scrubTurn], liveState);
+        const after = toDisplayState(turnRecords[target], liveState);
+        const timings = animationTimings(speedMs);
+        if (timings && after.moves.length > 0) {
+          isAnimatingRef.current = true;
+          setAnimating(true);
+          await animateTurn(before, after, timings, setDisplayOverride, setFadingPlayerId);
+          isAnimatingRef.current = false;
+          setAnimating(false);
+          setDisplayOverride(null);
+        }
+      }
+      setScrubTurn(target);
+    },
+    [scrubTurn, turnRecords, liveState, speedMs],
+  );
 
   const reset = useCallback((botIndices: number[]) => {
     gameRef.current = newGame(botIndices);
     isAnimatingRef.current = false;
     setAnimating(false);
     setFadingPlayerId(null);
+    setDisplayOverride(null);
     const snapshot = gameRef.current.getSnapshot();
-    setState(snapshot);
+    setLiveState(snapshot);
     setHistory([historyPoint(snapshot)]);
+    setTurnRecords([toTurnRecord(snapshot)]);
+    setScrubTurn(0);
     setPlaying(false);
   }, []);
 
@@ -190,5 +273,21 @@ export function useGame(initialBotIndices: number[] = [0, 1, 2, 3]) {
     return () => clearInterval(id);
   }, [playing, speedMs, step]);
 
-  return { state, history, step, reset, playing, setPlaying, speedMs, setSpeedMs, animating, fadingPlayerId };
+  return {
+    state,
+    history,
+    step,
+    reset,
+    playing,
+    setPlaying,
+    speedMs,
+    setSpeedMs,
+    animating,
+    fadingPlayerId,
+    scrubTurn,
+    latestTurn: liveState.turn,
+    isLive,
+    scrubTo,
+    stepTurn,
+  };
 }

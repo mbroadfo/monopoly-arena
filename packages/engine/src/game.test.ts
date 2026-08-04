@@ -373,6 +373,69 @@ describe("Game", () => {
     expect(rentLine).toContain("$50"); // double the normal $25 single-railroad rent
   });
 
+  it("does not move (or grant a roll) a player who stays in jail", () => {
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2; // every roll: d1=1, d2=2 (never a double)
+    };
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => false, // never pays/uses a card — must roll for doubles
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+    const jailed: Bot = { name: "Jailed", ...passthrough };
+    const dummy: Bot = { name: "Dummy", ...passthrough };
+
+    const game = new Game({ playerNames: ["Jailed", "Dummy"], bots: [jailed, dummy], rng: fixedRoll });
+    game.state.currentPlayerIndex = 0;
+    game.state.players[0].inJail = true;
+    game.state.players[0].jailTurns = 0;
+    game.state.players[0].position = 10; // Jail
+
+    game.playTurn(); // Jailed: rolls a non-double, stays in jail — must NOT also move this turn.
+
+    expect(game.state.players[0].position).toBe(10); // unchanged — this was the bug: it used to move anyway
+    expect(game.state.players[0].inJail).toBe(true);
+    expect(game.state.players[0].jailTurns).toBe(1);
+    expect(game.state.log.at(-1)).toContain("stays in jail (turn 1/3)");
+    expect(game.state.moves).toEqual([]); // no movement recorded this turn
+  });
+
+  it("moves exactly once — no bonus roll — when rolling doubles to leave jail", () => {
+    const doubleRoll = () => 0.4; // every rng() call: floor(0.4*6)+1 = 3 -> d1=d2=3, always a double
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => false,
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+    const jailed: Bot = { name: "Jailed", ...passthrough };
+    const dummy: Bot = { name: "Dummy", ...passthrough };
+
+    const game = new Game({ playerNames: ["Jailed", "Dummy"], bots: [jailed, dummy], rng: doubleRoll });
+    game.state.currentPlayerIndex = 0;
+    game.state.players[0].inJail = true;
+    game.state.players[0].jailTurns = 1;
+    game.state.players[0].position = 10; // Jail
+
+    game.playTurn(); // Jailed: rolls doubles (3+3=6), leaves jail, moves once to 16 — no bonus roll.
+
+    expect(game.state.players[0].inJail).toBe(false);
+    expect(game.state.players[0].position).toBe(16); // 10 + 6, a single move — this was the bug: it used to roll again
+    expect(game.state.moves).toHaveLength(1);
+    expect(game.state.moves[0]).toEqual({ playerId: "p0", from: 10, to: 16, type: "walk", direction: "forward" });
+  });
+
   it("records a walk move for the roll and a teleport move for a card that sends to jail", () => {
     let call = 0;
     const fixedRoll = () => {

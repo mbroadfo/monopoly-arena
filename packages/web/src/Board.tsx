@@ -1,12 +1,15 @@
-import { Car, Cat, Crown, Dog, Footprints, HelpCircle, Lightbulb, Ship, ShowerHead, Trophy } from "lucide-react";
+import { Lightbulb, ShowerHead, Trophy } from "lucide-react";
 import type { GameState, Space } from "@monopoly-arena/engine";
-import { EDGE_DEPTH_RATIO, GROUP_COLORS, PLAYER_COLORS, isCorner, spaceToGrid, spaceToPercent } from "./boardLayout";
+import { EDGE_DEPTH_RATIO, GROUP_COLORS, PLAYER_COLORS, TOKEN_ICONS, isCorner, spaceToGrid, spaceToPercent } from "./boardLayout";
 import railroadIcon from "./assets/railroad.png";
 import communityChestIcon from "./assets/community-chest.png";
 import goIcon from "./assets/go.png";
 import jailIcon from "./assets/jail.png";
 import goToJailIcon from "./assets/go-to-jail.png";
 import freeParkingIcon from "./assets/free-parking.png";
+import chanceIcon from "./assets/Chance.png";
+import chanceCardArt from "./assets/Chance-Card.png";
+import communityChestCardArt from "./assets/Community-Chest-Card.png";
 
 type Edge = "top" | "bottom" | "left" | "right";
 
@@ -83,7 +86,7 @@ function edgeTextStyle(edge: Edge): React.CSSProperties | undefined {
 function TileIcon({ space }: { space: Space }) {
   switch (space.type) {
     case "chance":
-      return <HelpCircle size={28} color="#e65100" strokeWidth={2.5} />;
+      return <img src={chanceIcon} alt="" style={{ width: 44, height: 44, display: "block" }} />;
     case "community-chest":
       return (
         <div className="chest-icon-crop" style={{ width: 32, height: 32 }}>
@@ -120,7 +123,7 @@ function CornerTile({ space }: { space: Space }) {
     case "free-parking":
       return <img src={freeParkingIcon} alt="Free Parking" className="corner-image corner-image-flip" />;
     case "go-to-jail":
-      return <img src={goToJailIcon} alt="Go To Jail" className="corner-image" />;
+      return <img src={goToJailIcon} alt="Go To Jail" className="corner-image corner-image-rotate-ccw" />;
     default:
       return <div className="corner-label">{space.name.toUpperCase()}</div>;
   }
@@ -135,11 +138,6 @@ function CornerTile({ space }: { space: Space }) {
 // minmax(0, ...) strips the implicit content-based minimum plain `fr` tracks otherwise get,
 // so a tile's icon/text can't quietly inflate a track past its fair share of the ratio.
 const BOARD_TEMPLATE = `minmax(0, ${EDGE_DEPTH_RATIO}fr) repeat(9, minmax(0, 1fr)) minmax(0, ${EDGE_DEPTH_RATIO}fr)`;
-
-// Classic Monopoly piece icons, matched 1:1 by player index to PLAYER_COLORS. Single-color
-// (stroke-only) icons rather than emoji, so color/contrast is fully controllable against the
-// token's own background — see .token-icon in index.css.
-const TOKEN_ICONS = [Crown, Car, Dog, Footprints, Ship, Cat];
 
 // Fixed per-player-index offsets for tokens sharing a tile — deliberately NOT recomputed from
 // how many players currently share the tile (that made every token on a tile jump to a new
@@ -228,9 +226,9 @@ export function Board({ state, fadingPlayerId }: { state: GameState; fadingPlaye
               {record && (record.houses > 0 || record.hotel) && !record.mortgaged && (
                 <div className={`building-row ${edge ? `edge-${edge}` : ""}`}>
                   {record.hotel ? (
-                    <div className="hotel" />
+                    <div className="hotel" style={iconStyle} />
                   ) : (
-                    Array.from({ length: record.houses }).map((_, i) => <div className="house" key={i} />)
+                    Array.from({ length: record.houses }).map((_, i) => <div className="house" key={i} style={iconStyle} />)
                   )}
                 </div>
               )}
@@ -270,24 +268,18 @@ export function Board({ state, fadingPlayerId }: { state: GameState; fadingPlaye
         <div className="board-center">
           {/* Ribbon runs bottom-left to top-right at 45deg, leaving the other two corners open for the card piles. */}
           <div className="center-card-pile chance-pile">
-            <div className="pile-card back" />
-            <div className="pile-card back" />
-            <div className="pile-card front">
-              <HelpCircle size={20} color="#fff" strokeWidth={3} />
-              <span>CHANCE</span>
-            </div>
+            <img src={chanceCardArt} alt="" className="pile-card back" />
+            <img src={chanceCardArt} alt="" className="pile-card back" />
+            <img src={chanceCardArt} alt="Chance" className="pile-card front" />
           </div>
 
           <div className="center-card-pile chest-pile">
-            <div className="pile-card back" />
-            <div className="pile-card back" />
-            <div className="pile-card front">
-              <div className="chest-icon-crop pile-chest-icon">
-                <img src={communityChestIcon} alt="" />
-              </div>
-              <span>CHEST</span>
-            </div>
+            <img src={communityChestCardArt} alt="" className="pile-card back" />
+            <img src={communityChestCardArt} alt="" className="pile-card back" />
+            <img src={communityChestCardArt} alt="Community Chest" className="pile-card front" />
           </div>
+
+          <div className="center-turn">Turn {state.turn}</div>
 
           <div className="center-logo">
             <div className="logo-ribbon">
@@ -296,23 +288,14 @@ export function Board({ state, fadingPlayerId }: { state: GameState; fadingPlaye
             </div>
           </div>
 
-          <div className="center-status">
-            <div className="center-turn">Turn {state.turn}</div>
-            {state.winnerId ? (
+          {state.winnerId && (
+            <div className="center-status">
               <div className="center-winner">
                 <Trophy size={18} color="#ffd54f" />
                 {state.players.find((p) => p.id === state.winnerId)?.name} wins!
               </div>
-            ) : (
-              <div className="center-current">
-                <span
-                  className="current-dot"
-                  style={{ background: PLAYER_COLORS[state.currentPlayerIndex % PLAYER_COLORS.length] }}
-                />
-                {state.players[state.currentPlayerIndex].name}'s turn
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

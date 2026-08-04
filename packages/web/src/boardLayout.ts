@@ -1,3 +1,4 @@
+import { Car, Cat, Crown, Dog, Footprints, Ship } from "lucide-react";
 import type { ColorGroup } from "@monopoly-arena/engine";
 
 export const GRID_SIZE = 11;
@@ -56,3 +57,8 @@ export const GROUP_COLORS: Record<ColorGroup, string> = {
 // Validated against the dark chart surface (`dataviz` skill's validate_palette.js) for the
 // four-player case: lightness band, CVD separation, and contrast all pass for indices 0-3.
 export const PLAYER_COLORS = ["#e63946", "#2a9d8f", "#d97706", "#8338ec", "#3a86ff", "#ffbe0b"];
+
+// Classic Monopoly piece icons, matched 1:1 by player index to PLAYER_COLORS — shared by the
+// board tokens, the monopoly badge, and the player panel so the same icon+color pairing for a
+// given player reads consistently everywhere it appears.
+export const TOKEN_ICONS = [Crown, Car, Dog, Footprints, Ship, Cat];

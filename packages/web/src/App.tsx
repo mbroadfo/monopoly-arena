@@ -5,7 +5,8 @@ import { LogFeed } from "./LogFeed";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { BankrollChart } from "./BankrollChart";
 import { Timeline } from "./Timeline";
-import { BOT_CHOICES, useGame } from "./useGame";
+import { LineupPicker } from "./LineupPicker";
+import { useGame } from "./useGame";
 
 export function App() {
   const [botIndices, setBotIndices] = useState([0, 1, 2, 3]);
@@ -28,6 +29,8 @@ export function App() {
     scrubTo,
     stepTurn,
   } = useGame(botIndices);
+
+  const isSetupMode = state.turn === 0;
 
   return (
     <div className="app">
@@ -64,8 +67,8 @@ export function App() {
             <button onClick={() => setPlaying((p) => !p)} disabled={state.winnerId !== null || !isLive}>
               {playing ? "Pause" : "Auto-play"}
             </button>
-            <label>
-              Speed:
+            <label className="speed-control">
+              Speed
               <input
                 type="range"
                 min={50}
@@ -73,11 +76,9 @@ export function App() {
                 step={50}
                 value={1050 - speedMs}
                 onChange={(e) => setSpeedMs(1050 - Number(e.target.value))}
+                aria-label="Playback speed"
               />
             </label>
-            <button className="secondary" onClick={() => reset(botIndices)}>
-              Reset
-            </button>
             <label className="animate-toggle">
               <input
                 type="checkbox"
@@ -86,29 +87,20 @@ export function App() {
               />
               Animate movement
             </label>
+            <button className="secondary" onClick={() => reset(botIndices)}>
+              Reset
+            </button>
           </div>
-          <div className="bot-select">
-            {botIndices.map((choice, i) => (
-              <label key={i}>
-                Player {i + 1}:
-                <select
-                  value={choice}
-                  onChange={(e) => {
-                    const next = [...botIndices];
-                    next[i] = Number(e.target.value);
-                    setBotIndices(next);
-                    reset(next);
-                  }}
-                >
-                  {BOT_CHOICES.map((bot, idx) => (
-                    <option key={idx} value={idx}>
-                      {bot.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ))}
-          </div>
+
+          {isSetupMode && (
+            <LineupPicker
+              botIndices={botIndices}
+              onChange={(next) => {
+                setBotIndices(next);
+                reset(next);
+              }}
+            />
+          )}
 
           <LogFeed state={state} />
         </div>

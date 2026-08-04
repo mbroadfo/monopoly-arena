@@ -498,25 +498,31 @@ body {
 
 /* --- Side panel --- */
 
+/* One compact toolbar row: Step, Auto-play, Speed, Animate movement, Reset. Reset gets
+   margin-left: auto so it stays right-aligned when there's slack, without disrupting the
+   left-packed flow of everything before it. flex-wrap stays on as a narrow-screen fallback only —
+   at the sidebar's normal width everything fits on one line. */
 .controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .controls button {
-  padding: 8px 16px;
-  border-radius: 6px;
+  padding: 5px 10px;
+  border-radius: 5px;
   border: 1px solid #555;
   background: #2a9d8f;
   color: #fff;
   cursor: pointer;
-  font-size: 0.95rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
 }
 
 .controls button.secondary {
   background: #444;
+  margin-left: auto;
 }
 
 .controls button:disabled {
@@ -524,13 +530,27 @@ body {
   cursor: default;
 }
 
+.speed-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: #ccc;
+  white-space: nowrap;
+}
+
+.speed-control input[type="range"] {
+  width: 64px;
+}
+
 .animate-toggle {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 0.85rem;
+  gap: 4px;
+  font-size: 0.75rem;
   color: #ccc;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .bot-select {
@@ -547,57 +567,122 @@ body {
 .player-panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 4px;
 }
 
-.player-card {
+/* Compact two-line scoreboard row (~48-54px) — replaces the old larger single-stat player card.
+   Border/background carry the *current turn* highlight; the swatch icon carries the player's own
+   identity color — two separate concerns, not overloaded onto the same accent. */
+.player-row {
   display: flex;
-  gap: 12px;
-  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
   background: #262626;
-  border-radius: 8px;
-  padding: 8px 12px;
-  border: 2px solid transparent;
+  border-radius: 6px;
+  padding: 5px 8px;
+  border: 1.5px solid transparent;
+  box-sizing: border-box;
+  min-height: 48px;
 }
 
-.player-card.current {
+.player-row.current {
   border-color: #f4a261;
+  background: #2e2a20;
 }
 
-.player-card.bankrupt {
-  opacity: 0.5;
+.player-row-line1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.player-swatch {
-  width: 30px;
-  height: 30px;
+.player-row-swatch {
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
+  background: var(--player-color);
 }
 
-.player-name {
+.player-row-swatch.bankrupt {
+  background: #666;
+  filter: grayscale(1);
+}
+
+.player-row-name {
+  flex: 1 1 0%;
   font-weight: 700;
-  font-size: 0.95rem;
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
-.player-cash-row {
+.current-indicator {
+  color: #f4a261;
+}
+
+.player-row-cash {
+  font-size: 0.85rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 6px;
+}
+
+.player-row-line2 {
+  font-size: 0.72rem;
+  color: #aaa;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 4px;
+  padding-left: 26px; /* line up under the name, past the swatch */
 }
 
-.player-cash {
-  font-size: 1.1em;
-  font-weight: 600;
+/* The labels ("properties", "monopolies") stay a quiet neutral gray; the numbers are bolded and
+   brightened so the actual stats are what catches the eye scanning down the list, not the words
+   around them. Monopolies get a gold accent when non-zero (matches the properties panel's own
+   monopoly badge), and development gets the same green as the board's house/hotel markers. */
+.player-row-line2 strong {
+  color: #f0f0f0;
+  font-weight: 800;
 }
 
-.player-meta {
-  font-size: 0.8em;
-  color: #999;
+.player-row-line2 .stat-gold {
+  color: #ffd54f;
+}
+
+.player-row-line2 .stat-development {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #7de881;
+}
+
+.player-row-line2 .stat-development strong {
+  color: #7de881;
+}
+
+.player-row-line2 svg {
+  flex-shrink: 0;
+  vertical-align: -1px;
+}
+
+.player-row.bankrupt .player-row-name {
+  color: #888;
+}
+
+.bankrupt-label {
+  font-weight: 800;
+  color: #e63946;
+  letter-spacing: 0.4px;
+  font-size: 0.78rem;
 }
 
 .winner-banner {

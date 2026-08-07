@@ -107,6 +107,13 @@ export interface MoveEvent {
   type: "walk" | "teleport";
   /** Meaningless for "teleport". */
   direction: "forward" | "backward";
+  /**
+   * Ownership as it stood immediately after this move's landing was fully resolved (buy/auction/
+   * rent/card effects) — lets the web layer patch ownership-driven visuals (property outlines,
+   * monopoly badges, house/hotel markers) in step with a turn's animation instead of only once
+   * the whole turn finishes.
+   */
+  ownershipAfter: GameState["ownership"];
 }
 
 export interface DiceRoll {

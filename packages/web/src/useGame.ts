@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Game,
+  createMonteCarloBot,
   createNaiveBot,
   createOrangeRushBot,
   createRailroadBaronBot,
@@ -55,6 +56,13 @@ function withPlayerPosition(snapshot: GameState, playerId: string, position: num
   return { ...snapshot, players: snapshot.players.map((p) => (p.id === playerId ? { ...p, position } : p)) };
 }
 
+/** Patches in ownership as it stood right after a move's landing resolved (see MoveEvent.ownershipAfter)
+ * so property outlines, monopoly badges, and house/hotel markers update in step with the token's
+ * hop animation instead of only once the whole turn finishes. */
+function withOwnership(snapshot: GameState, ownership: GameState["ownership"]): GameState {
+  return { ...snapshot, ownership };
+}
+
 /** Every "teleport" MoveEvent the engine produces is a jail send (see sendToJail in game.ts —
  * the only place that pushes one), so the reveal frame needs inJail patched to true alongside
  * the position, not just position alone — otherwise the board briefly renders the token in the
@@ -96,11 +104,14 @@ async function animateTurn(
       onFade(move.playerId);
       await sleep(timings.fadeMs);
       working = withPlayerJailed(working, move.playerId, move.to);
+      working = withOwnership(working, move.ownershipAfter);
       onFrame(working);
       onFade(null);
     } else {
-      for (const pos of tilePath(move.from, move.to, move.direction)) {
-        working = withPlayerPosition(working, move.playerId, pos);
+      const path = tilePath(move.from, move.to, move.direction);
+      for (let i = 0; i < path.length; i++) {
+        working = withPlayerPosition(working, move.playerId, path[i]);
+        if (i === path.length - 1) working = withOwnership(working, move.ownershipAfter);
         onFrame(working);
         await sleep(timings.hopMs);
       }
@@ -158,6 +169,7 @@ export const BOT_CHOICES: BotChoice[] = [
   { label: "Random (buys everything, builds with thin buffer)", create: () => createRandomBot() },
   { label: "OrangeRush (rushes orange/red, thin reserve)", create: () => createOrangeRushBot() },
   { label: "RailroadBaron (railroads/utilities, big reserve)", create: () => createRailroadBaronBot() },
+  { label: "MonteCarlo (simulates rollouts to buy/bid)", create: () => createMonteCarloBot() },
 ];
 
 function newGame(botIndices: number[]): Game {

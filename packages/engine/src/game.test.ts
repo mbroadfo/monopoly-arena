@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Game } from "./game.js";
 import { createNaiveBot } from "./bots/naive.js";
 import { createRandomBot } from "./bots/random.js";
-import type { Bot } from "./types.js";
+import type { Bot, GameState } from "./types.js";
 
 function mulberry32(seed: number) {
   return () => {
@@ -433,7 +433,9 @@ describe("Game", () => {
     expect(game.state.players[0].inJail).toBe(false);
     expect(game.state.players[0].position).toBe(16); // 10 + 6, a single move — this was the bug: it used to roll again
     expect(game.state.moves).toHaveLength(1);
-    expect(game.state.moves[0]).toEqual({ playerId: "p0", from: 10, to: 16, type: "walk", direction: "forward" });
+    // toMatchObject, not toEqual: this test is about movement, not ownership — ownershipAfter is
+    // covered by its own dedicated test below.
+    expect(game.state.moves[0]).toMatchObject({ playerId: "p0", from: 10, to: 16, type: "walk", direction: "forward" });
   });
 
   it("records a walk move for the roll and a teleport move for a card that sends to jail", () => {
@@ -467,9 +469,59 @@ describe("Game", () => {
     }
 
     expect(jailMove).toBeDefined();
-    expect(jailMove).toEqual({ playerId: "p0", from: 2, to: 10, type: "teleport", direction: "forward" });
+    // toMatchObject, not toEqual: this test is about movement, not ownership — ownershipAfter is
+    // covered by its own dedicated test below.
+    expect(jailMove).toMatchObject({ playerId: "p0", from: 2, to: 10, type: "teleport", direction: "forward" });
     // The dice roll that landed on Community Chest is recorded as its own preceding walk move.
-    expect(game.state.moves[0]).toEqual({ playerId: "p0", from: 39, to: 2, type: "walk", direction: "forward" });
+    expect(game.state.moves[0]).toMatchObject({ playerId: "p0", from: 39, to: 2, type: "walk", direction: "forward" });
+  });
+
+  it("stamps ownershipAfter on the move where a purchase happened, not just at turn end — the fix for the outline-lags-a-whole-turn animation bug", () => {
+    const passthrough = {
+      chooseHouseToBuild: () => null,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+    const buyer: Bot = { name: "Buyer", ...passthrough, shouldBuyProperty: () => true };
+    const other: Bot = { name: "Other", ...passthrough, shouldBuyProperty: () => false };
+
+    const game = new Game({ playerNames: ["Buyer", "Other"], bots: [buyer, other], rng: mulberry32(3) });
+
+    // Search for a turn shaped like the reported bug: Buyer rolls doubles onto an unowned,
+    // ownable space (buying it), then rolls again (doubles grants a bonus roll) and lands
+    // somewhere else. Reset position each attempt rather than trying to hand-predict the exact
+    // rng call count needed to hit this — the constructor's own deck shuffling and turn-order
+    // rolls already consume an rng-implementation-dependent number of calls before play begins.
+    let firstMove: GameState["moves"][number] | undefined;
+    let secondMove: GameState["moves"][number] | undefined;
+    for (let i = 0; i < 500 && !firstMove; i++) {
+      game.state.currentPlayerIndex = 0;
+      game.state.players[0].position = 0;
+      game.state.players[0].cash = 1500; // otherwise repeated purchases across attempts would exhaust it
+      for (const index of Object.keys(game.state.ownership)) game.state.ownership[Number(index)].ownerId = null;
+      game.playTurn();
+      if (game.state.moves.length < 2) continue;
+      const [m0, m1] = game.state.moves;
+      if (m0.to === m1.to) continue; // only care about a turn with two genuinely distinct landings
+      if (m0.ownershipAfter[m0.to]?.ownerId !== "p0") continue; // first landing must have been a buy
+      firstMove = m0;
+      secondMove = m1;
+    }
+
+    expect(firstMove).toBeDefined();
+    expect(secondMove).toBeDefined();
+
+    // The whole point: the FIRST move's stamp already reflects the buy that happened on THAT
+    // roll, not just whatever ownership looked like once the entire turn (both rolls) finished.
+    expect(firstMove!.ownershipAfter[firstMove!.to].ownerId).toBe("p0");
+    // Whatever the second landing was, it hadn't happened yet as of the first move's stamp.
+    if (secondMove!.to in firstMove!.ownershipAfter) {
+      expect(firstMove!.ownershipAfter[secondMove!.to].ownerId).not.toBe("p0");
+    }
   });
 
   it("starts every player with $1500 and no properties owned", () => {

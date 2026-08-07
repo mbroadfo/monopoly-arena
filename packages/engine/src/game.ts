@@ -1,7 +1,7 @@
 import { BOARD, GROUP_MEMBERS } from "./board.js";
 import { CHANCE_CARDS, COMMUNITY_CHEST_CARDS, type Card } from "./cards.js";
 import { rollDice, type Rng } from "./dice.js";
-import type { Bot, GameState, Ownable, OwnershipRecord, PlayerState, PropertySpace, TradeOffer } from "./types.js";
+import type { Bot, GameState, MoveEvent, Ownable, OwnershipRecord, PlayerState, PropertySpace, TradeOffer } from "./types.js";
 
 const STARTING_CASH = 1500;
 const GO_SALARY = 200;
@@ -137,6 +137,23 @@ export class Game {
     return structuredClone(this.state);
   }
 
+  /**
+   * Resumes a `Game` from an existing mid-game `GameState` (e.g. from `getSnapshot()`) instead of
+   * starting fresh — for search-based bots simulating hypothetical futures. Reuses the constructor
+   * for its harmless, discarded fresh-init bookkeeping (decks, rng storage), then overwrites the
+   * state and rebuilds the bots map keyed by the resumed state's actual player IDs (not the
+   * fresh-init IDs the throwaway construction generated), so bot identity survives the swap
+   * correctly regardless of ID-generation details. Chance/Community Chest deck order isn't part of
+   * `GameState`, so the resumed game gets a freshly-shuffled deck — the correct model, since a real
+   * player doesn't know deck order either.
+   */
+  static fromState(state: GameState, bots: Bot[], rng: Rng = Math.random): Game {
+    const game = new Game({ playerNames: state.players.map((p) => p.name), bots, rng });
+    game.state = structuredClone(state);
+    game.bots = new Map(state.players.map((p, i) => [p.id, bots[i]]));
+    return game;
+  }
+
   isGameOver(): boolean {
     return this.state.winnerId !== null;
   }
@@ -225,8 +242,9 @@ export class Game {
       player.inJail = false;
       player.jailTurns = 0;
       this.log(`${player.name} rolls doubles and leaves jail.`);
-      this.movePlayer(player, roll.total);
+      const move = this.movePlayer(player, roll.total);
       this.resolveSpace(player);
+      move.ownershipAfter = structuredClone(this.state.ownership);
       return false;
     }
     player.jailTurns += 1;
@@ -240,8 +258,9 @@ export class Game {
       player.inJail = false;
       player.jailTurns = 0;
       this.log(`${player.name} has served max jail time and pays $${JAIL_FINE}.`);
-      this.movePlayer(player, roll.total);
+      const move = this.movePlayer(player, roll.total);
       this.resolveSpace(player);
+      move.ownershipAfter = structuredClone(this.state.ownership);
       return false;
     }
     this.log(`${player.name} stays in jail (turn ${player.jailTurns}/${MAX_JAIL_TURNS}).`);
@@ -264,19 +283,34 @@ export class Game {
       this.state.doublesStreak = 0;
     }
 
-    this.movePlayer(player, roll.total);
+    const move = this.movePlayer(player, roll.total);
     this.resolveSpace(player);
+    move.ownershipAfter = structuredClone(this.state.ownership);
     return roll.isDouble && !player.inJail;
   }
 
-  private movePlayer(player: PlayerState, spaces: number) {
+  /**
+   * Pushes and returns the `MoveEvent` so the caller can stamp `ownershipAfter` once the landing
+   * (via `resolveSpace`) has fully resolved — `ownershipAfter` starts as a cheap reference (not a
+   * clone) here, since ownership hasn't resolved yet at push time.
+   */
+  private movePlayer(player: PlayerState, spaces: number): MoveEvent {
     const before = player.position;
     player.position = (player.position + spaces) % 40;
     if (player.position < before) {
       player.cash += GO_SALARY;
       this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
     }
-    this.state.moves.push({ playerId: player.id, from: before, to: player.position, type: "walk", direction: "forward" });
+    const move: MoveEvent = {
+      playerId: player.id,
+      from: before,
+      to: player.position,
+      type: "walk",
+      direction: "forward",
+      ownershipAfter: this.state.ownership,
+    };
+    this.state.moves.push(move);
+    return move;
   }
 
   /** Walks forward from a position (wrapping at 40) to the first space of the given type. */
@@ -288,12 +322,26 @@ export class Game {
     throw new Error(`no space of type ${type} on the board`); // unreachable given board composition
   }
 
-  private sendToJail(player: PlayerState) {
+  /**
+   * Pushes and returns the `MoveEvent`, fully stamped — unlike `movePlayer`, no `resolveSpace`
+   * follows a jail teleport, so there's no ownership change to wait for; the clone can happen
+   * immediately.
+   */
+  private sendToJail(player: PlayerState): MoveEvent {
     const before = player.position;
     player.position = JAIL_SPACE_INDEX;
     player.inJail = true;
     player.jailTurns = 0;
-    this.state.moves.push({ playerId: player.id, from: before, to: JAIL_SPACE_INDEX, type: "teleport", direction: "forward" });
+    const move: MoveEvent = {
+      playerId: player.id,
+      from: before,
+      to: JAIL_SPACE_INDEX,
+      type: "teleport",
+      direction: "forward",
+      ownershipAfter: structuredClone(this.state.ownership),
+    };
+    this.state.moves.push(move);
+    return move;
   }
 
   private resolveSpace(player: PlayerState, rentOverride?: RentOverride) {
@@ -458,14 +506,25 @@ export class Game {
           player.cash += GO_SALARY;
           this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
         }
-        this.state.moves.push({ playerId: player.id, from: before, to: player.position, type: "walk", direction: "forward" });
+        const move: MoveEvent = {
+          playerId: player.id,
+          from: before,
+          to: player.position,
+          type: "walk",
+          direction: "forward",
+          ownershipAfter: this.state.ownership,
+        };
+        this.state.moves.push(move);
         this.resolveSpace(player);
+        move.ownershipAfter = structuredClone(this.state.ownership);
         return;
       }
-      case "advance-spaces":
-        this.movePlayer(player, effect.spaces);
+      case "advance-spaces": {
+        const move = this.movePlayer(player, effect.spaces);
         this.resolveSpace(player);
+        move.ownershipAfter = structuredClone(this.state.ownership);
         return;
+      }
       case "advance-to-nearest-railroad": {
         const before = player.position;
         player.position = this.nearestSpaceOfType(before, "railroad");
@@ -473,8 +532,17 @@ export class Game {
           player.cash += GO_SALARY;
           this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
         }
-        this.state.moves.push({ playerId: player.id, from: before, to: player.position, type: "walk", direction: "forward" });
+        const move: MoveEvent = {
+          playerId: player.id,
+          from: before,
+          to: player.position,
+          type: "walk",
+          direction: "forward",
+          ownershipAfter: this.state.ownership,
+        };
+        this.state.moves.push(move);
         this.resolveSpace(player, "double-railroad");
+        move.ownershipAfter = structuredClone(this.state.ownership);
         return;
       }
       case "advance-to-nearest-utility": {
@@ -484,8 +552,17 @@ export class Game {
           player.cash += GO_SALARY;
           this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
         }
-        this.state.moves.push({ playerId: player.id, from: before, to: player.position, type: "walk", direction: "forward" });
+        const move: MoveEvent = {
+          playerId: player.id,
+          from: before,
+          to: player.position,
+          type: "walk",
+          direction: "forward",
+          ownershipAfter: this.state.ownership,
+        };
+        this.state.moves.push(move);
         this.resolveSpace(player, "utility-x10");
+        move.ownershipAfter = structuredClone(this.state.ownership);
         return;
       }
       case "go-back-spaces": {
@@ -493,8 +570,17 @@ export class Game {
         // sidesteps movePlayer's forward-only pass-GO detection and JS's negative-modulo quirk.
         const before = player.position;
         player.position = ((player.position - effect.spaces) % 40 + 40) % 40;
-        this.state.moves.push({ playerId: player.id, from: before, to: player.position, type: "walk", direction: "backward" });
+        const move: MoveEvent = {
+          playerId: player.id,
+          from: before,
+          to: player.position,
+          type: "walk",
+          direction: "backward",
+          ownershipAfter: this.state.ownership,
+        };
+        this.state.moves.push(move);
         this.resolveSpace(player);
+        move.ownershipAfter = structuredClone(this.state.ownership);
         return;
       }
       case "collect":

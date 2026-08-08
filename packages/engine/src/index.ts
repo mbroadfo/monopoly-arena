@@ -4,6 +4,7 @@ export * from "./cards.js";
 export * from "./dice.js";
 export * from "./game.js";
 export * from "./lookahead.js";
+export * from "./batch.js";
 export { createRandomBot } from "./bots/random.js";
 export { createNaiveBot } from "./bots/naive.js";
 export { createOrangeRushBot } from "./bots/orangeRush.js";

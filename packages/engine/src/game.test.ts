@@ -217,14 +217,16 @@ describe("Game", () => {
     // First landing: waived, one use consumed.
     game.state.players[0].position = 36;
     game.playTurn(); // Seller: 36 -> 39.
-    expect(game.state.log.at(-1)).toContain("owes no rent for Boardwalk (waived)");
+    expect(game.state.log.at(-1)).toContain("Seller owes no rent on Boardwalk");
+    expect(game.state.log.at(-1)).toContain("1 use left");
     expect(game.state.tradeConditions[0].usesRemaining).toBe(1);
     game.playTurn(); // Buyer.
 
     // Second landing: waived again, uses now exhausted.
     game.state.players[0].position = 36;
     game.playTurn(); // Seller.
-    expect(game.state.log.at(-1)).toContain("owes no rent for Boardwalk (waived)");
+    expect(game.state.log.at(-1)).toContain("Seller owes no rent on Boardwalk");
+    expect(game.state.log.at(-1)).toContain("condition now used up");
     expect(game.state.tradeConditions[0].usesRemaining).toBe(0);
     game.playTurn(); // Buyer.
 

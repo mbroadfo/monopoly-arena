@@ -1,7 +1,7 @@
 import { BOARD, GROUP_MEMBERS } from "./board.js";
 import { CHANCE_CARDS, COMMUNITY_CHEST_CARDS, type Card } from "./cards.js";
 import { rollDice, type Rng } from "./dice.js";
-import type { Bot, GameState, MoveEvent, Ownable, OwnershipRecord, PlayerState, PropertySpace, TradeOffer } from "./types.js";
+import type { Bot, GameState, MoveEvent, Ownable, OwnershipRecord, PlayerState, PropertySpace, TradeCondition, TradeOffer } from "./types.js";
 
 const STARTING_CASH = 1500;
 const GO_SALARY = 200;
@@ -49,6 +49,17 @@ function describeTradeSide(properties: number[], cash: number, goojfCards: numbe
   if (cash > 0) parts.push(`$${cash}`);
   if (goojfCards > 0) parts.push(`${goojfCards} Get Out of Jail Free card${goojfCards > 1 ? "s" : ""}`);
   return parts.length > 0 ? parts.join(" + ") : "nothing";
+}
+
+/** Human-readable summary of a freshly-struck TradeCondition, for the play-by-play log. */
+function describeTradeCondition(condition: TradeCondition, players: PlayerState[]): string {
+  const space = BOARD[condition.spaceIndex] as PropertySpace;
+  const protectedName = players.find((p) => p.id === condition.protectedPlayerId)?.name ?? condition.protectedPlayerId;
+  if (condition.kind === "waive") {
+    const uses = condition.usesRemaining ?? 0;
+    return `${protectedName} pays no rent on ${space.name} for the next ${uses} visit${uses === 1 ? "" : "s"}`;
+  }
+  return `${protectedName}'s rent on ${space.name} is capped at $${space.rent[condition.capLevel!]}`;
 }
 
 export interface GameOptions {
@@ -384,6 +395,7 @@ export class Game {
         player.cash -= price;
         record.ownerId = player.id;
         this.log(`${player.name} buys ${space.name} for $${price}.`);
+        this.checkMonopolyFormed(player, space.group);
       } else {
         this.log(`${player.name} declines to buy ${space.name}. It goes to auction.`);
         this.runAuction(spaceIndex);
@@ -395,7 +407,7 @@ export class Game {
     const owner = this.state.players.find((p) => p.id === record.ownerId)!;
     const rent = this.calculateRent(space, record, owner, player, rentOverride);
     if (rent === 0 && space.type === "property") {
-      this.log(`${player.name} owes no rent for ${space.name} (waived).`);
+      // calculateRent already logged the waiving trade condition that caused this.
       return;
     }
     this.log(`${player.name} owes ${owner.name} $${rent} rent for ${space.name}.`);
@@ -438,6 +450,7 @@ export class Game {
       winner.cash -= currentBid;
       this.state.ownership[spaceIndex].ownerId = winner.id;
       this.log(`${winner.name} wins the auction for ${space.name} at $${currentBid}.`);
+      this.checkMonopolyFormed(winner, space.group);
     } else {
       this.log(`No bids for ${space.name}; it remains unowned.`);
     }
@@ -487,10 +500,19 @@ export class Game {
     );
     if (condition?.kind === "waive" && (condition.usesRemaining ?? 0) > 0) {
       condition.usesRemaining! -= 1;
+      const remaining = condition.usesRemaining!;
+      this.log(
+        `Trade condition applies: ${payer.name} owes no rent on ${space.name}` +
+          (remaining > 0 ? ` (${remaining} use${remaining === 1 ? "" : "s"} left).` : " (condition now used up)."),
+      );
       return 0;
     }
     if (condition?.kind === "cap" && condition.capLevel !== undefined) {
-      return Math.min(rent, space.rent[condition.capLevel]);
+      const capped = Math.min(rent, space.rent[condition.capLevel]);
+      if (capped < rent) {
+        this.log(`Trade condition applies: ${payer.name}'s rent on ${space.name} is capped at $${capped} (would have been $${rent}).`);
+      }
+      return capped;
     }
     return rent;
   }
@@ -806,19 +828,40 @@ export class Game {
     const given = describeTradeSide(offer.offeredProperties, offer.offeredCash, offer.offeredGetOutOfJailFreeCards);
     const received = describeTradeSide(offer.requestedProperties, offer.requestedCash, offer.requestedGetOutOfJailFreeCards);
     this.log(`${from.name} trades ${given} to ${to.name} for ${received}.`);
-    if (offer.conditions.length > 0) {
-      this.log(`The trade includes ${offer.conditions.length} rent condition${offer.conditions.length > 1 ? "s" : ""}.`);
+    for (const condition of offer.conditions) {
+      this.log(`Trade condition: ${describeTradeCondition(condition, this.state.players)}.`);
     }
+
+    // Checked once per distinct group touched (not per property) — a trade can move more than
+    // one member of the same group at once, and re-checking an already-announced group per index
+    // would log the same completion twice.
+    for (const group of new Set(offer.offeredProperties.map((i) => (BOARD[i] as Ownable).group))) {
+      this.checkMonopolyFormed(to, group);
+    }
+    for (const group of new Set(offer.requestedProperties.map((i) => (BOARD[i] as Ownable).group))) {
+      this.checkMonopolyFormed(from, group);
+    }
+  }
+
+  /** Logs a note the moment a player's holdings complete an entire group — all properties of one
+   * color, all four railroads, or both utilities. */
+  private checkMonopolyFormed(player: PlayerState, group: string) {
+    const groupIndices = GROUP_MEMBERS[group];
+    if (!groupIndices.every((i) => this.state.ownership[i].ownerId === player.id)) return;
+    const label = group === "railroad" ? "all four railroads" : group === "utility" ? "both utilities" : `the ${group} monopoly`;
+    this.log(`${player.name} completes ${label}!`);
   }
 
   private handleBankruptcy(player: PlayerState, creditor: PlayerState | null) {
     this.log(`${player.name} cannot pay and is bankrupt${creditor ? ` (owed to ${creditor.name})` : ""}.`);
     player.bankrupt = true;
+    const groupsTransferred = new Set<string>();
     for (const [indexStr, record] of Object.entries(this.state.ownership)) {
       if (record.ownerId !== player.id) continue;
       const index = Number(indexStr);
       if (creditor) {
         record.ownerId = creditor.id;
+        groupsTransferred.add((BOARD[index] as Ownable).group);
       } else {
         if (record.hotel) {
           this.state.hotelsRemaining += 1;
@@ -826,6 +869,9 @@ export class Game {
         this.state.housesRemaining += record.houses;
         this.state.ownership[index] = { ownerId: null, houses: 0, hotel: false, mortgaged: false };
       }
+    }
+    if (creditor) {
+      for (const group of groupsTransferred) this.checkMonopolyFormed(creditor, group);
     }
     player.cash = 0;
     this.checkForWinner();

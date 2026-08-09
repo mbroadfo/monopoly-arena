@@ -1,0 +1,27 @@
+import { describe, expect, it } from "vitest";
+import { trainNeat } from "./train.js";
+
+describe("trainNeat", () => {
+  it(
+    "runs a tiny population/generation smoke test without throwing, recording fitness per generation",
+    () => {
+      const { champion, history } = trainNeat({
+        population: 4,
+        generations: 2,
+        gamesPerGenome: 1,
+        seed: 1,
+        maxTurnsPerGame: 200, // a full ~1000-turn cap isn't needed just to prove the machinery runs
+      });
+
+      expect(history).toHaveLength(2);
+      for (const generation of history) {
+        expect(Number.isFinite(generation.bestFitness)).toBe(true);
+        expect(Number.isFinite(generation.averageFitness)).toBe(true);
+        expect(generation.speciesCount).toBeGreaterThan(0);
+      }
+      expect(champion.nodes.length).toBeGreaterThan(0);
+      expect(champion.connections.length).toBeGreaterThan(0);
+    },
+    60_000,
+  );
+});

@@ -2,6 +2,7 @@
 import { parseArgs } from "node:util";
 import { createMonteCarloBot } from "./bots/monteCarlo.js";
 import { createNaiveBot } from "./bots/naive.js";
+import { createNeatBot } from "./bots/neatBot.js";
 import { createOrangeRushBot } from "./bots/orangeRush.js";
 import { createRailroadBaronBot } from "./bots/railroadBaron.js";
 import { createRandomBot } from "./bots/random.js";
@@ -18,6 +19,7 @@ const BOT_FACTORIES: Record<string, (rng: Rng) => Bot> = {
   orangeRush: () => createOrangeRushBot(),
   railroadBaron: () => createRailroadBaronBot(),
   monteCarlo: (rng) => createMonteCarloBot({ rng }),
+  neat: () => createNeatBot(),
 };
 
 function usage(message?: string): never {

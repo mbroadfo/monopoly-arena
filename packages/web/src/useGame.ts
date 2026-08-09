@@ -3,6 +3,7 @@ import {
   Game,
   createMonteCarloBot,
   createNaiveBot,
+  createNeatBot,
   createOrangeRushBot,
   createRailroadBaronBot,
   createRandomBot,
@@ -170,6 +171,7 @@ export const BOT_CHOICES: BotChoice[] = [
   { label: "OrangeRush (rushes orange/red, thin reserve)", create: () => createOrangeRushBot() },
   { label: "RailroadBaron (railroads/utilities, big reserve)", create: () => createRailroadBaronBot() },
   { label: "MonteCarlo (simulates rollouts to buy/bid)", create: () => createMonteCarloBot() },
+  { label: "NEAT (evolved network scores buy/bid/build)", create: () => createNeatBot() },
 ];
 
 function newGame(botIndices: number[]): Game {

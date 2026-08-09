@@ -108,18 +108,21 @@ export function expectedRentIncome(state: GameState, playerId: string): number {
 }
 
 /**
- * Rough net-worth heuristic for scoring a simulated end state: cash + owned property value
- * (mortgaged properties count at half value, via `propertyValue`) + development value (houses/
- * hotels count at what they cost to build — a house-equivalent scale of houses=1..4, hotel=5,
- * matching `PlayerPanel.tsx`'s `countHouseEquivalents` convention on the web side — without this,
- * cash spent building houses would just vanish from the score, since `propertyValue` only counts
- * a space's face price) + a flat bonus per completed color-group monopoly (railroads/utilities
- * excluded — they scale with count owned, not a single completed set) + a scaled expected-rent
- * term (see `expectedRentIncome`) capturing forward-looking earning potential that a rollout
- * horizon may cut off before it actually materializes as cash, or a large penalty if the player
- * ended up bankrupt.
+ * Rough net-worth heuristic: cash + owned property value (mortgaged properties count at half
+ * value, via `propertyValue`) + development value (houses/hotels count at what they cost to
+ * build — a house-equivalent scale of houses=1..4, hotel=5, matching `PlayerPanel.tsx`'s
+ * `countHouseEquivalents` convention on the web side — without this, cash spent building houses
+ * would just vanish from the score, since `propertyValue` only counts a space's face price) + a
+ * flat bonus per completed color-group monopoly (railroads/utilities excluded — they scale with
+ * count owned, not a single completed set), or a large penalty if the player is bankrupt.
+ *
+ * Exported on its own (not just inlined into `evaluatePosition`) because it's also the right
+ * fitness signal for NEAT's evolutionary training (`neat/train.ts`) and for `batch.ts`'s
+ * per-player game results — both want "how well is this player doing" without
+ * `evaluatePosition`'s `expectedRentIncome` term, which needs live per-turn opponent-distance
+ * context that doesn't apply to a fitness score or an end-of-game summary.
  */
-export function evaluatePosition(state: GameState, playerId: string): number {
+export function netWorth(state: GameState, playerId: string): number {
   const player = state.players.find((p) => p.id === playerId);
   if (!player || player.bankrupt) return BANKRUPTCY_PENALTY;
 
@@ -142,9 +145,19 @@ export function evaluatePosition(state: GameState, playerId: string): number {
     .filter(([group]) => group !== "railroad" && group !== "utility")
     .filter(([, indices]) => indices.every((i) => state.ownership[i].ownerId === playerId)).length;
 
-  const rentValue = expectedRentIncome(state, playerId) * RENT_VALUE_MULTIPLIER;
+  return player.cash + ownedValue + developmentValue + monopolies * MONOPOLY_BONUS;
+}
 
-  return player.cash + ownedValue + developmentValue + monopolies * MONOPOLY_BONUS + rentValue;
+/**
+ * `netWorth` plus a scaled expected-rent term (see `expectedRentIncome`), capturing
+ * forward-looking earning potential that a rollout horizon may cut off before it actually
+ * materializes as cash. This is the leaf-evaluation function `averageRolloutScore`/
+ * `evaluatePurchase` use — see `netWorth`'s own doc comment for why the two are separate.
+ */
+export function evaluatePosition(state: GameState, playerId: string): number {
+  const base = netWorth(state, playerId);
+  if (base === BANKRUPTCY_PENALTY) return base;
+  return base + expectedRentIncome(state, playerId) * RENT_VALUE_MULTIPLIER;
 }
 
 export interface RolloutOptions {

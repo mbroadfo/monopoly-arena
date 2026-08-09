@@ -1,6 +1,7 @@
 import { GROUP_MEMBERS } from "./board.js";
 import { mulberry32, type Rng } from "./dice.js";
 import { Game } from "./game.js";
+import { netWorth } from "./lookahead.js";
 import type { Bot, GameState } from "./types.js";
 
 export interface BatchPlayer {
@@ -23,11 +24,26 @@ export interface BatchOptions {
   onGameComplete?: (gameIndex: number, result: GameResult) => void;
 }
 
+export interface PlayerResult {
+  name: string;
+  finalCash: number;
+  properties: number;
+  monopolies: number;
+  bankrupt: boolean;
+  /** `lookahead.ts`'s `netWorth` heuristic at game end — the fitness signal NEAT's training
+   * (`neat/train.ts`) actually selects on, since win/loss alone gives almost no gradient early
+   * in evolution when genomes rarely win outright. */
+  netWorth: number;
+}
+
 export interface GameResult {
   winnerName: string | null; // null if maxTurnsPerGame was hit with no winner
   turns: number;
   winnerProperties: number;
   winnerMonopolies: number;
+  /** Every seat's end-of-game standing, not just the winner's — e.g. NEAT's fitness evaluation
+   * (neat/train.ts) needs to know how its own evolving genome's seat did even in games it lost. */
+  players: PlayerResult[];
 }
 
 export interface BatchResult {
@@ -80,6 +96,14 @@ export function runBatchSimulation(options: BatchOptions): BatchResult {
       turns,
       winnerProperties: winner ? countOwnedProperties(game.state, winner.id) : 0,
       winnerMonopolies: winner ? countMonopolies(game.state, winner.id) : 0,
+      players: game.state.players.map((p) => ({
+        name: p.name,
+        finalCash: p.cash,
+        properties: countOwnedProperties(game.state, p.id),
+        monopolies: countMonopolies(game.state, p.id),
+        bankrupt: p.bankrupt,
+        netWorth: netWorth(game.state, p.id),
+      })),
     };
     games.push(result);
     options.onGameComplete?.(gameIndex, result);

@@ -10,6 +10,7 @@
     "test": "npm run test --workspace=@monopoly-arena/engine",
     "dev": "npm run dev --workspace=@monopoly-arena/web",
     "build": "npm run build --workspace=@monopoly-arena/engine && npm run build --workspace=@monopoly-arena/web",
-    "batch": "npm run build --workspace=@monopoly-arena/engine && node packages/engine/dist/batch-cli.js"
+    "batch": "npm run build --workspace=@monopoly-arena/engine && node packages/engine/dist/batch-cli.js",
+    "train-neat": "npm run build --workspace=@monopoly-arena/engine && node packages/engine/dist/neat/train-cli.js"
   }
 }

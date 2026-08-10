@@ -5,6 +5,7 @@ import { createNeatBot } from "../bots/neatBot.js";
 import { createOrangeRushBot } from "../bots/orangeRush.js";
 import { createRandomBot } from "../bots/random.js";
 import { mulberry32 } from "../dice.js";
+import { createCoachedGenome } from "./coaching.js";
 import { PROPERTY_SCORE_INPUT_COUNT, PROPERTY_SCORE_OUTPUT_COUNT } from "./encoding.js";
 import { createMinimalGenome } from "./genome.js";
 import { InnovationTracker } from "./innovation.js";
@@ -21,6 +22,10 @@ export interface TrainOptions {
   seed?: number;
   maxTurnsPerGame?: number;
   speciesDistanceThreshold?: number;
+  /** Seed generation 0 with `createCoachedGenome` (weights biased toward known-sane buy/bid/build
+   * judgment, see `coaching.ts`) instead of `createMinimalGenome`'s uniform-random weights.
+   * Default true; set false to compare against the uncoached baseline. */
+  coaching?: boolean;
   onGeneration?: (stats: GenerationStats) => void;
 }
 
@@ -40,7 +45,14 @@ export interface TrainResult {
 // without this, a genome that plays it safe and loses slowly could out-select a genome that
 // actually wins, since a long, cautious game can accumulate more net worth along the way.
 const WIN_BONUS = 2000;
-const DEFAULT_DISTANCE_THRESHOLD = 3;
+// Lower than early NEAT literature's typical ~3 default: at 17 inputs (all-input-to-output, no
+// hidden nodes yet in a fresh population), genomeDistance's disjoint/excess terms are usually 0
+// (little structural divergence this early), so distance is dominated by average weight
+// difference alone — a threshold of 3 let the *entire* population collapse into a single species
+// every generation in practice (observed empirically while training this phase's champion),
+// defeating speciation's actual purpose of protecting a lineage that's drifted from the rest long
+// enough to prove itself. 1 reliably produces multiple species instead.
+const DEFAULT_DISTANCE_THRESHOLD = 1;
 const DEFAULT_MAX_TURNS_PER_GAME = 1000;
 
 const REFERENCE_ROSTER: BatchPlayer[] = [
@@ -84,8 +96,10 @@ export function trainNeat(options: TrainOptions): TrainResult {
     PROPERTY_SCORE_INPUT_COUNT + PROPERTY_SCORE_OUTPUT_COUNT, // continues after the minimal genome's own node ids
   );
 
+  const coaching = options.coaching ?? true;
+  const seedGenome = coaching ? createCoachedGenome : createMinimalGenome;
   let population: Genome[] = Array.from({ length: options.population }, () =>
-    createMinimalGenome(PROPERTY_SCORE_INPUT_COUNT, PROPERTY_SCORE_OUTPUT_COUNT, rng),
+    seedGenome(PROPERTY_SCORE_INPUT_COUNT, PROPERTY_SCORE_OUTPUT_COUNT, rng),
   );
 
   let species: Species[] = [];

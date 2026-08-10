@@ -10,6 +10,8 @@ export * from "./neat/genome.js";
 export * from "./neat/innovation.js";
 export * from "./neat/reproduction.js";
 export * from "./neat/encoding.js";
+export * from "./neat/coaching.js";
+export * from "./neat/trade.js";
 export * from "./neat/train.js";
 export { createRandomBot } from "./bots/random.js";
 export { createNaiveBot } from "./bots/naive.js";

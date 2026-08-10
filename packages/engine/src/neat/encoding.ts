@@ -3,8 +3,20 @@ import type { GameState, Ownable, PropertySpace } from "../types.js";
 import { evaluate } from "./genome.js";
 import type { Genome } from "./types.js";
 
-export const PROPERTY_SCORE_INPUT_COUNT = 9;
+export const PROPERTY_SCORE_INPUT_COUNT = 17;
 export const PROPERTY_SCORE_OUTPUT_COUNT = 1;
+
+/** A representative base-rent stand-in for railroad/utility spaces, which don't have a `rent`
+ * tier array — one railroad owned ($25) and the low utility multiplier at the average roll
+ * (4 * 7 = $28), close enough in scale to a cheap color property's base rent for this feature's
+ * purpose (a rough income-potential signal, not an exact rent forecast). */
+const NON_COLOR_BASE_RENT = 25;
+
+function monopolyCountFor(state: GameState, playerId: string): number {
+  return Object.entries(GROUP_MEMBERS)
+    .filter(([group]) => group !== "railroad" && group !== "utility")
+    .filter(([, indices]) => indices.every((i) => state.ownership[i].ownerId === playerId)).length;
+}
 
 /**
  * The single feature vector behind all three decisions this network drives: how valuable is
@@ -13,15 +25,13 @@ export const PROPERTY_SCORE_OUTPUT_COUNT = 1;
  * network weights start small and random, so keeping inputs on a comparable scale matters for
  * evolution to have a sane starting gradient to work with.
  */
-function encodePropertyFeatures(state: GameState, playerId: string, spaceIndex: number, priceOverride?: number): number[] {
+export function encodePropertyFeatures(state: GameState, playerId: string, spaceIndex: number, priceOverride?: number): number[] {
   const player = state.players.find((p) => p.id === playerId)!;
   const opponents = state.players.filter((p) => p.id !== playerId && !p.bankrupt);
   const opponentCashTotal = opponents.reduce((sum, p) => sum + p.cash, 0);
 
   const ownedCount = Object.values(state.ownership).filter((r) => r.ownerId === playerId).length;
-  const monopolyCount = Object.entries(GROUP_MEMBERS)
-    .filter(([group]) => group !== "railroad" && group !== "utility")
-    .filter(([, indices]) => indices.every((i) => state.ownership[i].ownerId === playerId)).length;
+  const monopolyCount = monopolyCountFor(state, playerId);
 
   const space = state.spaces[spaceIndex] as Ownable;
   const price = priceOverride ?? space.price;
@@ -29,6 +39,13 @@ function encodePropertyFeatures(state: GameState, playerId: string, spaceIndex: 
   const groupIndices = group ? GROUP_MEMBERS[group] : [];
   const ownedInGroup = groupIndices.filter((i) => state.ownership[i].ownerId === playerId).length;
   const groupProgress = groupIndices.length > 0 ? ownedInGroup / groupIndices.length : 0;
+  const isRailroadOrUtility = space.type === "railroad" || space.type === "utility";
+
+  const record = state.ownership[spaceIndex];
+  const baseRent = isRailroadOrUtility ? NON_COLOR_BASE_RENT : (space as PropertySpace).rent[0];
+  const improvementLevel = record.hotel ? 5 : record.houses;
+  const leadingOpponentMonopolies = opponents.reduce((max, p) => Math.max(max, monopolyCountFor(state, p.id)), 0);
+  const activePlayers = state.players.filter((p) => !p.bankrupt).length;
 
   return [
     player.cash / 1500,
@@ -38,8 +55,16 @@ function encodePropertyFeatures(state: GameState, playerId: string, spaceIndex: 
     price / 400,
     groupIndices.length > 0 ? groupIndices.length / 4 : 0,
     groupProgress,
-    space.type === "railroad" || space.type === "utility" ? 1 : 0,
+    isRailroadOrUtility ? 1 : 0,
     Math.min(state.turn / 200, 1),
+    (player.cash - price) / 1500,
+    baseRent / 250,
+    improvementLevel / 5,
+    record.mortgaged ? 1 : 0,
+    leadingOpponentMonopolies / 8,
+    state.players.length > 0 ? activePlayers / state.players.length : 0,
+    state.housesRemaining / 32,
+    state.hotelsRemaining / 12,
   ];
 }
 

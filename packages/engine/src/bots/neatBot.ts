@@ -1,7 +1,8 @@
 import championGenome from "./neat-champion.json" with { type: "json" };
 import { buildableCandidates, scoreProperty } from "../neat/encoding.js";
+import { generateTradeCandidates, scoreTradeCandidate } from "../neat/trade.js";
 import type { Genome } from "../neat/types.js";
-import type { Bot, GameState } from "../types.js";
+import type { Bot, GameState, TradeOffer } from "../types.js";
 import { createNaiveBot } from "./naive.js";
 
 // Mirrors Game's own private AUCTION_BID_INCREMENT (game.ts) — the engine validates any bid
@@ -49,7 +50,18 @@ export function createNeatBot(genome?: Genome): Bot {
     shouldPayToLeaveJail: fallback.shouldPayToLeaveJail,
     raiseCash: fallback.raiseCash,
     chooseFinanceAction: fallback.chooseFinanceAction,
-    proposeTrade: fallback.proposeTrade,
-    evaluateTrade: fallback.evaluateTrade,
+
+    proposeTrade(state: GameState, playerId: string): TradeOffer | null {
+      const scored = generateTradeCandidates(state, playerId)
+        .map((offer) => scoreTradeCandidate(activeGenome, state, offer))
+        .filter((s) => s.myGain > 0); // never propose a deal that looks self-harming
+      if (scored.length === 0) return null;
+      scored.sort((a, b) => b.fairness - a.fairness); // prefer offers that look good on both sides
+      return scored[0].offer;
+    },
+
+    evaluateTrade(state: GameState, _playerId: string, offer: TradeOffer): boolean {
+      return scoreTradeCandidate(activeGenome, state, offer).counterpartyGain > 0;
+    },
   };
 }

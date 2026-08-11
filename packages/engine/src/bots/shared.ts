@@ -45,6 +45,44 @@ export function propertyValue(state: GameState, spaceIndices: number[]): number 
 }
 
 /**
+ * The single highest rent any active opponent could currently charge `playerId`, across all
+ * their owned, unmortgaged properties at current development — a rough "how exposed am I right
+ * now" figure in real dollars. Deliberately simple: ignores this player's own board position
+ * (doesn't weight by landing probability, unlike `lookahead.ts`'s `expectedRentIncome`) and trade
+ * rent conditions (waive/cap) — a worst-case number is the right shape for a reserve floor, not an
+ * expected-value one. Utility rent uses the average-dice-roll estimate (7 * multiplier), matching
+ * `lookahead.ts`'s own convention for the same reason.
+ */
+export function maxOpponentRentThreat(state: GameState, playerId: string): number {
+  let maxRent = 0;
+  for (const opponent of state.players) {
+    if (opponent.id === playerId || opponent.bankrupt) continue;
+    for (const [indexStr, record] of Object.entries(state.ownership)) {
+      if (record.ownerId !== opponent.id || record.mortgaged) continue;
+      const index = Number(indexStr);
+      const space = state.spaces[index] as Ownable;
+      let rent: number;
+      if (space.type === "railroad") {
+        const count = GROUP_MEMBERS.railroad.filter((i) => state.ownership[i].ownerId === opponent.id).length;
+        rent = 25 * 2 ** (count - 1);
+      } else if (space.type === "utility") {
+        const count = GROUP_MEMBERS.utility.filter((i) => state.ownership[i].ownerId === opponent.id).length;
+        rent = 7 * (count >= 2 ? 10 : 4);
+      } else if (record.hotel) {
+        rent = space.rent[5];
+      } else if (record.houses > 0) {
+        rent = space.rent[record.houses];
+      } else {
+        const hasMonopoly = GROUP_MEMBERS[space.group].every((i) => state.ownership[i].ownerId === opponent.id);
+        rent = hasMonopoly ? space.rent[0] * 2 : space.rent[0];
+      }
+      if (rent > maxRent) maxRent = rent;
+    }
+  }
+  return maxRent;
+}
+
+/**
  * Color groups (railroads/utilities excluded — no house tiers, and rent scales with count
  * owned rather than a single missing piece) where this player owns all-but-one property, and
  * who owns the missing piece — only if it's actually tradeable (owned, no houses/hotel).

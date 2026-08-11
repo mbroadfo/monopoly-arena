@@ -33,17 +33,32 @@ describe("generateTradeCandidates", () => {
     expect(swap!.toPlayerId).toBe("p1");
   });
 
-  it("proposes cash-only offers scaled to a missing property's price, capped by cash on hand", () => {
+  it("proposes cash-only offers scaled to the completed group's real value, capped by cash on hand", () => {
     const state = baseState();
     state.ownership[MEDITERRANEAN] = owned("p0");
-    state.ownership[BALTIC] = owned("p1"); // price 60
-    state.players[0].cash = 100; // rules out the 2x ($120) cash offer
+    state.ownership[BALTIC] = owned("p1"); // price 60; brown group total value = 60 + 60 = 120
+    state.players[0].cash = 100; // rules out the largest offer: 60 + 0.5*120 = 120
 
     const candidates = generateTradeCandidates(state, "p0");
     const cashOffers = candidates.filter((c) => c.offeredProperties.length === 0 && c.requestedProperties.includes(BALTIC));
-    expect(cashOffers.some((c) => c.offeredCash === 60)).toBe(true);
-    expect(cashOffers.some((c) => c.offeredCash === 90)).toBe(true);
-    expect(cashOffers.some((c) => c.offeredCash === 120)).toBe(false);
+    expect(cashOffers.some((c) => c.offeredCash === 72)).toBe(true); // 60 + 0.1*120
+    expect(cashOffers.some((c) => c.offeredCash === 90)).toBe(true); // 60 + 0.25*120
+    expect(cashOffers.some((c) => c.offeredCash === 120)).toBe(false); // 60 + 0.5*120, exceeds cash
+  });
+
+  it("offers a bigger cash premium for a more valuable group, not just a flat multiple of the missing piece", () => {
+    // Dark blue: Park Place (350) + Boardwalk (400) = 750 total — a much richer prize than brown's
+    // 120, so the premium on top of Park Place's own price should be correspondingly larger.
+    const state = baseState();
+    state.ownership[37] = owned("p0"); // Park Place
+    state.ownership[39] = owned("p1"); // Boardwalk, price 400
+    state.players[0].cash = 2000;
+
+    const candidates = generateTradeCandidates(state, "p0");
+    const cashOffers = candidates
+      .filter((c) => c.offeredProperties.length === 0 && c.requestedProperties.includes(39))
+      .map((c) => c.offeredCash);
+    expect(Math.max(...cashOffers)).toBe(775); // 400 + 0.5*750
   });
 
   it("returns nothing when the player isn't one property short of any group", () => {

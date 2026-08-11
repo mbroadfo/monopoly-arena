@@ -80,9 +80,8 @@ export function scoreProperty(genome: Genome, state: GameState, playerId: string
 /**
  * Properties `playerId` is currently eligible to build a house/hotel on — mirrors NaiveBot's own
  * eligibility gathering (`bots/naive.ts`): owns the entire color group, no mortgaged group-mates,
- * no hotel yet, and can afford the house cost. Doesn't independently re-derive even-building
- * legality — like every other bot, an ineligible pick is simply rejected by `Game.tryBuild`,
- * ending the build phase for that call rather than crashing.
+ * no hotel yet, tied for least-developed within the group (the even-building rule — see below),
+ * and can afford the house cost.
  */
 export function buildableCandidates(state: GameState, playerId: string): number[] {
   const player = state.players.find((p) => p.id === playerId)!;
@@ -95,7 +94,17 @@ export function buildableCandidates(state: GameState, playerId: string): number[
     if (indices.some((i) => state.ownership[i].mortgaged)) continue;
     if (indices.some((i) => state.ownership[i].hotel)) continue;
 
+    // Even-building: mirrors Game's own private tryBuild rule — only group member(s) tied for
+    // *least* developed are actually eligible right now. Without this, a caller that doesn't pick
+    // the least-developed member itself (unlike NaiveBot's own greedy "fewest houses" choice) can
+    // get permanently stuck: it keeps re-selecting an already-ahead sibling, tryBuild rejects it
+    // every time, and the build phase silently ends for the turn without ever trying the sibling
+    // that's actually buildable — observed directly causing a full game-length stall in practice.
+    const houseLevel = (i: number) => (state.ownership[i].hotel ? 5 : state.ownership[i].houses);
+    const minLevel = Math.min(...indices.map(houseLevel));
+
     for (const index of indices) {
+      if (houseLevel(index) > minLevel) continue;
       const space = state.spaces[index] as PropertySpace;
       if (player.cash - space.houseCost < 0) continue;
       candidates.push(index);

@@ -1,9 +1,14 @@
-import { findMonopolyCompletionTargets } from "../bots/shared.js";
+import { GROUP_MEMBERS } from "../board.js";
+import { findMonopolyCompletionTargets, propertyValue } from "../bots/shared.js";
 import type { GameState, Ownable, TradeOffer } from "../types.js";
 import { scoreProperty } from "./encoding.js";
 import type { Genome } from "./types.js";
 
-const CASH_MULTIPLIERS = [1, 1.5, 2];
+// A cash offer's premium above the missing property's own face price scales with the *group's*
+// total value, not just the one piece — completing a monopoly is worth far more than a single
+// property's price (the doubled base rent alone, before even building), so a persuasive offer
+// needs to reflect that real prize, not a flat 1.5x/2x multiple of the smallest piece of it.
+const GROUP_VALUE_PREMIUM_FRACTIONS = [0.1, 0.25, 0.5];
 const SWEETENER_CAP_LEVEL = 3; // matches NaiveBot/OrangeRushBot's own convention for a "goodwill" cap
 
 /**
@@ -22,9 +27,10 @@ export function generateTradeCandidates(state: GameState, playerId: string): Tra
 
   for (const target of findMonopolyCompletionTargets(state, playerId)) {
     const space = state.spaces[target.spaceIndex] as Ownable;
+    const groupValue = propertyValue(state, GROUP_MEMBERS[(space as { group: string }).group]);
+    const cashOffers = GROUP_VALUE_PREMIUM_FRACTIONS.map((fraction) => Math.round(space.price + fraction * groupValue));
 
-    for (const multiplier of CASH_MULTIPLIERS) {
-      const offeredCash = Math.round(space.price * multiplier);
+    for (const offeredCash of cashOffers) {
       if (offeredCash > player.cash) continue;
       candidates.push({
         fromPlayerId: playerId,
@@ -39,10 +45,10 @@ export function generateTradeCandidates(state: GameState, playerId: string): Tra
       });
     }
 
-    // A sweetened variant at the lowest cash multiplier: same price, plus a rent-cap condition
+    // A sweetened variant at the smallest premium: same cash, plus a rent-cap condition
     // protecting the counterparty on the property they're giving up — a non-cash sweetener, same
     // pattern NaiveBot/OrangeRushBot already use.
-    const sweetenedCash = Math.round(space.price * CASH_MULTIPLIERS[0]);
+    const sweetenedCash = cashOffers[0];
     if (sweetenedCash <= player.cash) {
       candidates.push({
         fromPlayerId: playerId,

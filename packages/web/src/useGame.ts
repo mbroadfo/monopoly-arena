@@ -174,11 +174,56 @@ export const BOT_CHOICES: BotChoice[] = [
   { label: "NEAT (evolved network scores buy/bid/build)", create: () => createNeatBot() },
 ];
 
-function newGame(botIndices: number[]): Game {
-  return new Game({
-    playerNames: botIndices.map((b, i) => `${BOT_CHOICES[b].label.split(" ")[0]} ${i + 1}`),
-    bots: botIndices.map((b) => BOT_CHOICES[b].create()),
+const NEAT_INDEX = BOT_CHOICES.findIndex((choice) => choice.label.startsWith("NEAT"));
+
+interface NeatPersonality {
+  aggressiveness: number;
+  label: string;
+}
+
+const NEAT_DEALERS_CHOICE: NeatPersonality[] = [
+  { aggressiveness: -0.8, label: "Cautious" },
+  { aggressiveness: 0, label: "Balanced" },
+  { aggressiveness: 0.8, label: "Aggressive" },
+];
+
+/**
+ * Every NEAT seat shares the same trained genome, so without this they'd play as identical
+ * clones — not very interesting to watch. Spreads seats evenly across the aggressiveness range
+ * instead (see `createNeatBot`'s `aggressiveness` option): two seats land at the extremes ("one
+ * more, one less"), three land at both extremes plus a balanced middle seat, and so on. A single
+ * NEAT seat has no sibling to contrast against, so it's a dealer's-choice surprise pick instead —
+ * a fresh personality each game rather than always the same unmodified default.
+ */
+function neatPersonalities(count: number): NeatPersonality[] {
+  if (count <= 1) {
+    return [NEAT_DEALERS_CHOICE[Math.floor(Math.random() * NEAT_DEALERS_CHOICE.length)]];
+  }
+  return Array.from({ length: count }, (_, i) => {
+    const t = -1 + (2 * i) / (count - 1);
+    const label = t < -0.25 ? "Cautious" : t > 0.25 ? "Aggressive" : "Balanced";
+    return { aggressiveness: t, label };
   });
+}
+
+function newGame(botIndices: number[]): Game {
+  const personalities = neatPersonalities(botIndices.filter((b) => b === NEAT_INDEX).length);
+  let neatSeat = 0;
+
+  const bots: Bot[] = [];
+  const playerNames: string[] = [];
+  botIndices.forEach((b, i) => {
+    if (b === NEAT_INDEX) {
+      const personality = personalities[neatSeat++];
+      bots.push(createNeatBot(undefined, { aggressiveness: personality.aggressiveness }));
+      playerNames.push(`Neat (${personality.label}) ${i + 1}`);
+    } else {
+      bots.push(BOT_CHOICES[b].create());
+      playerNames.push(`${BOT_CHOICES[b].label.split(" ")[0]} ${i + 1}`);
+    }
+  });
+
+  return new Game({ playerNames, bots });
 }
 
 export function useGame(initialBotIndices: number[] = [0, 1, 2, 3]) {

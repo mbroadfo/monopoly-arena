@@ -38,6 +38,66 @@ function genomeWithWeight(outputIndex: number, inputIndex: number, weight: numbe
 const HAS_CANDIDATE_INDEX = 20;
 const OWN_CASH_INDEX = 0;
 
+describe("createNeatBot aggressiveness", () => {
+  it("an aggressive bot buys at a mildly negative score a neutral bot declines", () => {
+    // hasCandidate (always 1) weighted -0.3 -> tanh(-0.3) ~= -0.29, comfortably inside the +-0.5
+    // threshold range but on the "no" side of a bare > 0 check.
+    const genome = genomeWithWeight(OUTPUT_PROPERTY, HAS_CANDIDATE_INDEX, -0.3);
+    const state = baseState();
+    state.players[0].cash = 1500;
+
+    const neutral = createNeatBot(genome);
+    const aggressive = createNeatBot(genome, { aggressiveness: 1 });
+    expect(neutral.shouldBuyProperty(state, "p0", MEDITERRANEAN)).toBe(false);
+    expect(aggressive.shouldBuyProperty(state, "p0", MEDITERRANEAN)).toBe(true);
+  });
+
+  it("a cautious bot declines a mildly positive score a neutral bot accepts", () => {
+    const genome = genomeWithWeight(OUTPUT_PROPERTY, HAS_CANDIDATE_INDEX, 0.3);
+    const state = baseState();
+    state.players[0].cash = 1500;
+
+    const neutral = createNeatBot(genome);
+    const cautious = createNeatBot(genome, { aggressiveness: -1 });
+    expect(neutral.shouldBuyProperty(state, "p0", MEDITERRANEAN)).toBe(true);
+    expect(cautious.shouldBuyProperty(state, "p0", MEDITERRANEAN)).toBe(false);
+  });
+
+  it("an aggressive bot builds with a smaller cash reserve than a cautious one", () => {
+    const genome = genomeWithWeight(OUTPUT_PROPERTY, HAS_CANDIDATE_INDEX, 5); // always clears any threshold
+    const state = baseState();
+    state.ownership[MEDITERRANEAN] = owned("p0");
+    state.ownership[BALTIC] = owned("p0");
+    state.players[0].cash = 200; // BASE_BUILD_RESERVE(150) + houseCost(50) exactly — a cautious
+    // bot's inflated reserve should refuse to dip in, an aggressive bot's shrunk reserve should build.
+
+    const cautious = createNeatBot(genome, { aggressiveness: -1 });
+    const aggressive = createNeatBot(genome, { aggressiveness: 1 });
+    expect(cautious.chooseHouseToBuild(state, "p0")).toBeNull();
+    expect(aggressive.chooseHouseToBuild(state, "p0")).not.toBeNull();
+  });
+
+  it("clamps out-of-range aggressiveness instead of over-shifting", () => {
+    const genome = genomeWithWeight(OUTPUT_PROPERTY, HAS_CANDIDATE_INDEX, -0.3);
+    const state = baseState();
+    state.players[0].cash = 1500;
+
+    const clamped = createNeatBot(genome, { aggressiveness: 5 }); // should behave like aggressiveness: 1
+    const atMax = createNeatBot(genome, { aggressiveness: 1 });
+    expect(clamped.shouldBuyProperty(state, "p0", MEDITERRANEAN)).toBe(atMax.shouldBuyProperty(state, "p0", MEDITERRANEAN));
+  });
+
+  it("defaults to the unmodified genome behavior when no aggressiveness is given", () => {
+    const genome = genomeWithWeight(OUTPUT_PROPERTY, HAS_CANDIDATE_INDEX, -0.3);
+    const state = baseState();
+    state.players[0].cash = 1500;
+
+    expect(createNeatBot(genome).shouldBuyProperty(state, "p0", MEDITERRANEAN)).toBe(
+      createNeatBot(genome, { aggressiveness: 0 }).shouldBuyProperty(state, "p0", MEDITERRANEAN),
+    );
+  });
+});
+
 describe("createNeatBot", () => {
   describe("shouldPayToLeaveJail", () => {
     it("pays when the jail head scores positive", () => {

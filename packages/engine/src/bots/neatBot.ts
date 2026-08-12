@@ -36,6 +36,27 @@ const THREAT_RESERVE_MULTIPLIER = 2;
 // available candidate to avoid needless bankruptcy, matching every other bot's contract.
 const FINANCE_ACTION_MARGIN = 0.1;
 
+// How much a personality can shift the bar for acting on the network's own scores. At the extremes
+// (+-1), an aggressive bot buys/bids/leaves-jail/trades on scores as low as -AGGRESSION_THRESHOLD_SCALE
+// (opportunities a neutral bot would pass on) and a cautious one needs a score above
+// +AGGRESSION_THRESHOLD_SCALE (only the clearest opportunities). This is a threshold shift on the
+// *same* trained genome, not a different genome — cheap enough to give several NEAT seats in one
+// game distinct playstyles without training a personality-specific champion for each one.
+const AGGRESSION_THRESHOLD_SCALE = 0.5;
+// Same idea for the build reserve: aggressive halves it (builds with a thinner cash cushion),
+// cautious grows it by half again.
+const AGGRESSION_RESERVE_SCALE = 0.5;
+
+export interface NeatBotOptions {
+  /**
+   * -1 (cautious) to +1 (aggressive), default 0 — the genome's own trained behavior, unmodified.
+   * Shifts the action threshold on buy/bid/jail/trade decisions and the build cash reserve;
+   * doesn't touch `raiseCash`/`chooseFinanceAction`'s defensive logic or the mortgage/unmortgage
+   * self-consistency guard, which stay personality-independent safety nets regardless.
+   */
+  aggressiveness?: number;
+}
+
 /**
  * A bot driven by an evolved NEAT genome for all 8 `BotDecisions` — see `neat/encoding.ts`'s
  * unified `encodeDecisionFeatures`/five output heads (`scoreProperty`, `scoreJail`,
@@ -48,26 +69,29 @@ const FINANCE_ACTION_MARGIN = 0.1;
  * UI's lineup picker has a working bot with no training step required. Pass an explicit genome
  * during evolutionary training (`neat/train.ts`) to evaluate a candidate instead.
  */
-export function createNeatBot(genome?: Genome): Bot {
+export function createNeatBot(genome?: Genome, options: NeatBotOptions = {}): Bot {
   const activeGenome = genome ?? (championGenome as Genome);
+  const aggressiveness = Math.max(-1, Math.min(1, options.aggressiveness ?? 0));
+  const actionThreshold = -aggressiveness * AGGRESSION_THRESHOLD_SCALE;
+  const reserveMultiplier = Math.max(0, 1 - aggressiveness * AGGRESSION_RESERVE_SCALE);
 
   return {
     name: "NeatBot",
 
     shouldBuyProperty(state: GameState, playerId: string, spaceIndex: number): boolean {
-      return scoreProperty(activeGenome, state, playerId, spaceIndex) > 0;
+      return scoreProperty(activeGenome, state, playerId, spaceIndex) > actionThreshold;
     },
 
     auctionBid(state: GameState, playerId: string, spaceIndex: number, currentBid: number): number | null {
       const player = state.players.find((p) => p.id === playerId)!;
       const nextBid = currentBid + AUCTION_BID_INCREMENT;
       if (nextBid > player.cash) return null;
-      return scoreProperty(activeGenome, state, playerId, spaceIndex, nextBid) > 0 ? nextBid : null;
+      return scoreProperty(activeGenome, state, playerId, spaceIndex, nextBid) > actionThreshold ? nextBid : null;
     },
 
     chooseHouseToBuild(state: GameState, playerId: string): number | null {
       const player = state.players.find((p) => p.id === playerId)!;
-      const reserve = Math.max(BASE_BUILD_RESERVE, maxOpponentRentThreat(state, playerId) * THREAT_RESERVE_MULTIPLIER);
+      const reserve = Math.max(BASE_BUILD_RESERVE, maxOpponentRentThreat(state, playerId) * THREAT_RESERVE_MULTIPLIER) * reserveMultiplier;
       let best: { index: number; score: number } | null = null;
       for (const index of buildableCandidates(state, playerId)) {
         const cost = (state.spaces[index] as PropertySpace).houseCost;
@@ -79,7 +103,7 @@ export function createNeatBot(genome?: Genome): Bot {
     },
 
     shouldPayToLeaveJail(state: GameState, playerId: string): boolean {
-      return scoreJail(activeGenome, state, playerId) > 0;
+      return scoreJail(activeGenome, state, playerId) > actionThreshold;
     },
 
     raiseCash(state: GameState, playerId: string, _amountNeeded: number): number | null {
@@ -141,14 +165,14 @@ export function createNeatBot(genome?: Genome): Bot {
       // strength should cash out in the offers actually made.
       const scored = generateTradeCandidates(state, playerId)
         .map((offer) => scoreTradeCandidate(activeGenome, state, offer))
-        .filter((s) => s.myGain > 0 && s.counterpartyGain > 0);
+        .filter((s) => s.myGain > actionThreshold && s.counterpartyGain > actionThreshold);
       if (scored.length === 0) return null;
       scored.sort((a, b) => b.myGain - a.myGain);
       return scored[0].offer;
     },
 
     evaluateTrade(state: GameState, _playerId: string, offer: TradeOffer): boolean {
-      return scoreTradeCandidate(activeGenome, state, offer).counterpartyGain > 0;
+      return scoreTradeCandidate(activeGenome, state, offer).counterpartyGain > actionThreshold;
     },
   };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { baseState } from "../testFixtures.js";
-import { PROPERTY_SCORE_INPUT_COUNT } from "./encoding.js";
-import { generateTradeCandidates, scoreTradeCandidate } from "./trade.js";
+import { DECISION_INPUT_COUNT, DECISION_OUTPUT_COUNT, OUTPUT_PROPERTY } from "./encoding.js";
+import { cashPressure, generateTradeCandidates, scoreTradeCandidate } from "./trade.js";
 import type { Genome } from "./types.js";
 
 const MEDITERRANEAN = 1;
@@ -9,9 +9,24 @@ const BALTIC = 3; // brown group: [1, 3]
 const ORIENTAL = 6;
 const VERMONT = 8;
 const CONNECTICUT = 9; // lightblue group: [6, 8, 9]
+const READING_RAILROAD = 5;
+const PENNSYLVANIA_RAILROAD = 15;
+const BOARDWALK = 39;
 
-function owned(ownerId: string) {
-  return { ownerId, houses: 0, hotel: false, mortgaged: false };
+function owned(ownerId: string, overrides: { houses?: number; hotel?: boolean } = {}) {
+  return { ownerId, houses: overrides.houses ?? 0, hotel: overrides.hotel ?? false, mortgaged: false };
+}
+
+/** All nodes, zero connections — every scoreProperty output is exactly tanh(0) = 0, isolating the
+ * cash/leverage terms of scoreTradeCandidate from any property valuation. */
+function zeroGenome(): Genome {
+  return {
+    nodes: [
+      ...Array.from({ length: DECISION_INPUT_COUNT }, (_, i) => ({ id: i, kind: "input" as const })),
+      ...Array.from({ length: DECISION_OUTPUT_COUNT }, (_, o) => ({ id: DECISION_INPUT_COUNT + o, kind: "output" as const })),
+    ],
+    connections: [],
+  };
 }
 
 describe("generateTradeCandidates", () => {
@@ -66,19 +81,58 @@ describe("generateTradeCandidates", () => {
     const candidates = generateTradeCandidates(state, "p0");
     expect(candidates).toEqual([]);
   });
+
+  it("proposes cash offers for an opponent's railroad once the player owns at least one railroad", () => {
+    const state = baseState();
+    state.ownership[READING_RAILROAD] = owned("p0");
+    state.ownership[PENNSYLVANIA_RAILROAD] = owned("p1");
+    state.players[0].cash = 2000;
+
+    const candidates = generateTradeCandidates(state, "p0");
+    const railroadOffers = candidates.filter((c) => c.requestedProperties.includes(PENNSYLVANIA_RAILROAD));
+    expect(railroadOffers.length).toBeGreaterThan(0);
+    expect(railroadOffers.every((c) => c.toPlayerId === "p1" && c.offeredCash > 0)).toBe(true);
+  });
+
+  it("does not chase railroads it has no stake in yet (owns zero of the group)", () => {
+    const state = baseState();
+    state.ownership[PENNSYLVANIA_RAILROAD] = owned("p1");
+    state.players[0].cash = 2000;
+
+    const candidates = generateTradeCandidates(state, "p0");
+    expect(candidates.filter((c) => c.requestedProperties.includes(PENNSYLVANIA_RAILROAD))).toEqual([]);
+  });
+});
+
+describe("cashPressure", () => {
+  it("is 0 when no opponent poses any rent threat", () => {
+    const state = baseState();
+    expect(cashPressure(state, "p0")).toBe(0);
+  });
+
+  it("approaches 1 for a nearly-broke player facing a hotel, and 0 for a comfortable one", () => {
+    const state = baseState();
+    state.ownership[BOARDWALK] = owned("p1", { hotel: true }); // threat: Boardwalk hotel rent $2000
+    state.players[0].cash = 20;
+    expect(cashPressure(state, "p0")).toBeGreaterThan(0.99);
+
+    state.players[0].cash = 5000; // covers two worst-case landings with room to spare
+    expect(cashPressure(state, "p0")).toBe(0);
+  });
 });
 
 describe("scoreTradeCandidate", () => {
-  // A hand-built genome that only cares about feature index 6 (group progress) — isolates the
-  // effect under test from every other feature so the expected sign is unambiguous.
+  // A hand-built genome that only cares about feature index 14 (group progress) on the property
+  // head — isolates the effect under test from every other feature/head so the expected sign is
+  // unambiguous.
   function groupProgressOnlyGenome(): Genome {
     const nodes: Genome["nodes"] = [
-      ...Array.from({ length: PROPERTY_SCORE_INPUT_COUNT }, (_, i) => ({ id: i, kind: "input" as const })),
-      { id: PROPERTY_SCORE_INPUT_COUNT, kind: "output" as const },
+      ...Array.from({ length: DECISION_INPUT_COUNT }, (_, i) => ({ id: i, kind: "input" as const })),
+      ...Array.from({ length: DECISION_OUTPUT_COUNT }, (_, o) => ({ id: DECISION_INPUT_COUNT + o, kind: "output" as const })),
     ];
     return {
       nodes,
-      connections: [{ innovation: 0, from: 6, to: PROPERTY_SCORE_INPUT_COUNT, weight: 1, enabled: true }],
+      connections: [{ innovation: 0, from: 14, to: DECISION_INPUT_COUNT + OUTPUT_PROPERTY, weight: 1, enabled: true }],
     };
   }
 
@@ -124,5 +178,32 @@ describe("scoreTradeCandidate", () => {
 
     const score = scoreTradeCandidate(groupProgressOnlyGenome(), state, offer);
     expect(score.counterpartyGain).toBeLessThan(0);
+  });
+
+  it("values the same cash offer more highly to a cash-desperate counterparty than a comfortable one (leverage)", () => {
+    const makeState = (counterpartyCash: number) => {
+      const state = baseState();
+      state.ownership[MEDITERRANEAN] = owned("p1"); // the property p0 wants to buy
+      state.ownership[BOARDWALK] = owned("p0", { hotel: true }); // p0's hotel puts p1 under real rent threat
+      state.players[1].cash = counterpartyCash;
+      return state;
+    };
+    const offer = {
+      fromPlayerId: "p0",
+      toPlayerId: "p1",
+      offeredProperties: [],
+      offeredCash: 100,
+      offeredGetOutOfJailFreeCards: 0,
+      requestedProperties: [MEDITERRANEAN],
+      requestedCash: 0,
+      requestedGetOutOfJailFreeCards: 0,
+      conditions: [],
+    };
+
+    // zeroGenome makes every property worth exactly 0 to everyone, so the only difference between
+    // the two scores is how much the $100 is worth to the receiver — which is the leverage claim.
+    const desperate = scoreTradeCandidate(zeroGenome(), makeState(20), offer);
+    const comfortable = scoreTradeCandidate(zeroGenome(), makeState(5000), offer);
+    expect(desperate.counterpartyGain).toBeGreaterThan(comfortable.counterpartyGain);
   });
 });

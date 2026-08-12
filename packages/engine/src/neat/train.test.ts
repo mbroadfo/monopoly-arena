@@ -24,4 +24,26 @@ describe("trainNeat", () => {
     },
     60_000,
   );
+
+  it(
+    "runs with selfPlay enabled without throwing, producing a champion",
+    () => {
+      const { champion, history } = trainNeat({
+        population: 4,
+        generations: 3, // needs at least 2 to exercise "play against last generation's champion"
+        gamesPerGenome: 1,
+        seed: 1,
+        maxTurnsPerGame: 200,
+        selfPlay: true,
+      });
+
+      expect(history).toHaveLength(3);
+      for (const generation of history) {
+        expect(Number.isFinite(generation.bestFitness)).toBe(true);
+        expect(Number.isFinite(generation.averageFitness)).toBe(true);
+      }
+      expect(champion.nodes.length).toBeGreaterThan(0);
+    },
+    60_000,
+  );
 });

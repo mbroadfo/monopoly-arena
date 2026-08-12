@@ -34,6 +34,14 @@ export interface PlayerResult {
    * (`neat/train.ts`) actually selects on, since win/loss alone gives almost no gradient early
    * in evolution when genomes rarely win outright. */
   netWorth: number;
+  /** How many mortgage/unmortgage/sell-house actions this player took over the whole game — a
+   * proxy for wasteful finance-decision churn (e.g. mortgaging and immediately unmortgaging the
+   * same property over and over, bleeding the 10% unmortgage interest fee each cycle for nothing).
+   * Legitimate, occasional financial maneuvering only ever produces a handful of these in a game;
+   * hundreds or thousands is a clear pathology, not a strategy. `netWorth` alone reflects this
+   * only weakly (each cycle's $ cost is tiny against a game-long net worth), which is exactly why
+   * `neat/train.ts` uses this as its own, more direct fitness penalty. */
+  financeActionCount: number;
 }
 
 export interface GameResult {
@@ -60,6 +68,16 @@ function countMonopolies(state: GameState, playerId: string): number {
   return Object.entries(GROUP_MEMBERS)
     .filter(([group]) => group !== "railroad" && group !== "utility")
     .filter(([, indices]) => indices.every((i) => state.ownership[i].ownerId === playerId)).length;
+}
+
+function countFinanceActions(state: GameState, playerName: string): number {
+  const prefixes = [
+    `${playerName} mortgages`,
+    `${playerName} pays off the mortgage`,
+    `${playerName} sells a house`,
+    `${playerName} sells the hotel`,
+  ];
+  return state.log.filter((line) => prefixes.some((prefix) => line.startsWith(prefix))).length;
 }
 
 /**
@@ -103,6 +121,7 @@ export function runBatchSimulation(options: BatchOptions): BatchResult {
         monopolies: countMonopolies(game.state, p.id),
         bankrupt: p.bankrupt,
         netWorth: netWorth(game.state, p.id),
+        financeActionCount: countFinanceActions(game.state, p.name),
       })),
     };
     games.push(result);

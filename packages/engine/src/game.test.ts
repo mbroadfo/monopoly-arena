@@ -517,6 +517,48 @@ describe("Game", () => {
     }
   });
 
+  it("sells a house to cover a shortfall instead of going bankrupt, when every property is too developed to mortgage", () => {
+    const BROWN = [1, 3]; // Mediterranean Avenue, Baltic Avenue
+    const LUXURY_TAX = 38;
+    // A bot whose raiseCash never offers anything — every property it owns has houses on it, so a
+    // real bot's raiseCash (constrained to house-free properties, per BotDecisions' own contract)
+    // would have nothing legal to offer either; this stub just makes that explicit rather than
+    // relying on a specific bot implementation's exact mortgage-candidate logic.
+    const bot: Bot = {
+      name: "Developer",
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+
+    // Fixed roll of 1+2=3, so landing on Luxury Tax (38) is deterministic from position 35.
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2;
+    };
+    const game = new Game({ playerNames: ["Developer"], bots: [bot], rng: fixedRoll });
+    // 3 houses each on a cheap group's houseCost-$50 properties sells for $25/house — enough
+    // combined sale value ($150) to comfortably clear the $100 shortfall from a $48 starting cash.
+    for (const i of BROWN) {
+      game.state.ownership[i] = { ownerId: "p0", houses: 3, hotel: false, mortgaged: false };
+    }
+    game.state.players[0].position = 35;
+    game.state.players[0].cash = 48; // short of Luxury Tax's $100
+
+    game.playTurn();
+
+    expect(game.state.players[0].bankrupt).toBe(false);
+    expect(game.state.log.some((l) => l.includes("sells a house"))).toBe(true);
+    const stillOwnsOneBrown = BROWN.some((i) => game.state.ownership[i].ownerId === "p0");
+    expect(stillOwnsOneBrown).toBe(true); // survived by selling a house, not by losing everything
+  });
+
   it("starts every player with $1500 and no properties owned", () => {
     const game = new Game({
       playerNames: ["Alice", "Bob"],

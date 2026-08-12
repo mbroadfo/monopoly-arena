@@ -39,8 +39,12 @@ describe("createMonteCarloBot", () => {
     const bot = createMonteCarloBot({ rolloutCount: 20, horizonTurns: 5, rng: mulberry32(42) });
     const state = baseState();
     // Boardwalk (39, price 400) — Hero has just enough to afford it but nothing else, and owns
-    // no other dark blue property, so there's no monopoly upside to offset the risk.
-    state.players[0].cash = 420;
+    // no other dark blue property, so there's no monopoly upside to offset the risk. Left with
+    // only $1 (not a more generous cushion): raiseCash's own bankruptcy-avoidance mechanics
+    // (mortgaging, and now also selling houses) mean a rollout that lands Hero in modest debt can
+    // legitimately recover rather than auto-bankrupt, so a less extreme cash margin doesn't
+    // reliably read as "dangerously" short — this one does.
+    state.players[0].cash = 401;
 
     expect(bot.shouldBuyProperty(state, "p0", 39)).toBe(false);
   });

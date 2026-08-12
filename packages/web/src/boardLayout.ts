@@ -57,10 +57,10 @@ function spaceBounds(index: number): { left: number; top: number; right: number;
 // package, so duplicated here as the one place the web layer needs the raw index.
 export const JAIL_SPACE_INDEX = 10;
 
-// The Jail tile has two real sub-areas (see jail.png / corner-image-contain in Board.tsx): a
-// small inset cell — upper-right, bars visible — for tokens actually in jail, and an outer
-// L-shaped "Just Visiting" strip along the left and bottom edges for tokens that merely landed
-// there or are passing through. Fractions are eyeballed against the card art, not measured.
+// The Jail tile has two real sub-areas (see the .jail-corner rules in index.css): a small inset
+// cell — upper-right, bars visible — for tokens actually in jail, and an outer L-shaped "Just
+// Visiting" strip along the left and bottom edges for tokens that merely landed there or are
+// passing through. Fractions are eyeballed against the card art, not measured.
 const JAIL_CELL_FRACTION = { x: 0.68, y: 0.32 };
 const JAIL_VISITING_FRACTION = { x: 0.28, y: 0.76 };
 

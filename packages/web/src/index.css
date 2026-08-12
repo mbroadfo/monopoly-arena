@@ -204,23 +204,14 @@ body {
   object-position: bottom;
 }
 
-/* GO / Jail / Go-To-Jail are complete pre-made corner cards (background, border, and
-   text all baked into the artwork), so they just fill the tile edge-to-edge. */
+/* GO / Go-To-Jail are complete pre-made corner cards (background, border, and text all baked
+   into the artwork), so they just fill the tile edge-to-edge. Jail is handled separately below —
+   its art is just the orange "In Jail" badge, not a full card. */
 .corner-image {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
-}
-
-/* Jail's source art isn't square (edge labels extend past the bars cell), so stretch to
-   fit rather than cropping — the labels are more important than a perfectly square pixel. */
-/* Jail's source art isn't square (the "JUST"/"VISITING" labels extend past the orange cell) —
-   contain (rather than fill's non-uniform stretch, or cover's cropping) shows the whole image
-   at its correct proportions, leaving the tile's own cream background as breathing room around
-   it instead of squishing those edge labels to fit. */
-.corner-image-contain {
-  object-fit: contain;
 }
 
 .corner-image-flip {
@@ -229,6 +220,59 @@ body {
 
 .corner-image-rotate-ccw {
   transform: rotate(-90deg);
+}
+
+/* Anchored to the tile's upper-right (toward the board interior) — roughly matching
+   jailZoneAnchor's JAIL_CELL_FRACTION (boardLayout.ts), though that fraction is tuned for
+   token placement, not badge sizing, so the two aren't pixel-exact. */
+.jail-corner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.jail-corner-image {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 78%;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+/* The freed-up L-shaped strip (left + bottom) gets real "JUST"/"VISITING" text — kept narrow so
+   the badge stays the dominant visual. Mirrors jailZoneAnchor's JAIL_VISITING_FRACTION, the
+   same zone a "just visiting" token lands in. */
+.jail-corner-just {
+  position: absolute;
+  left: 2%;
+  width: 16%;
+  top: 4%;
+  bottom: 24%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  writing-mode: vertical-rl;
+  font-weight: 800;
+  font-size: 0.54rem;
+  letter-spacing: 0.5px;
+  color: #1c1c1c;
+}
+
+.jail-corner-visiting {
+  position: absolute;
+  left: 2%;
+  right: 2%;
+  bottom: 3%;
+  height: 15%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 0.54rem;
+  letter-spacing: 0.5px;
+  color: #1c1c1c;
 }
 
 .corner-label {

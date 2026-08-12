@@ -126,10 +126,16 @@ function CornerTile({ space }: { space: Space }) {
       // Square card, already oriented correctly: arrow points back along the bottom row.
       return <img src={goIcon} alt="GO" className="corner-image" />;
     case "jail":
-      // Not a plain square — "JUST" runs down the left edge and "VISITING" along the bottom
-      // edge, outside the orange cell, which are exactly this tile's two true outer (SW)
-      // edges. `contain` keeps its real proportions instead of stretching those labels.
-      return <img src={jailIcon} alt="Jail / Just Visiting" className="corner-image corner-image-contain" />;
+      // The source art is now just the orange "In Jail" badge (no baked-in labels), so it's
+      // shrunk and anchored to the tile's upper-right — the side facing the board interior —
+      // leaving the two true outer (SW) edges free for real "JUST"/"VISITING" text.
+      return (
+        <div className="jail-corner">
+          <img src={jailIcon} alt="In Jail" className="jail-corner-image" />
+          <span className="jail-corner-just">JUST</span>
+          <span className="jail-corner-visiting">VISITING</span>
+        </div>
+      );
     case "free-parking":
       return <img src={freeParkingIcon} alt="Free Parking" className="corner-image corner-image-flip" />;
     case "go-to-jail":

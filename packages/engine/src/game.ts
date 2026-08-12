@@ -701,14 +701,62 @@ export class Game {
     this.log(`${player.name} pays off the mortgage on ${BOARD[spaceIndex].name} for $${cost}.`);
   }
 
-  /** Gives the player's bot a chance to mortgage properties to cover a shortfall, before bankruptcy. */
+  /**
+   * Gives the player's bot a chance to mortgage properties to cover a shortfall, before bankruptcy.
+   *
+   * `amountNeeded` (from `payBank`/`payPlayer`) is the shortfall *at the moment this is called* —
+   * `amount - player.cash`, a fixed number. This used to be compared directly against
+   * `player.cash` as the loop's own exit condition, which is comparing two different things: total
+   * cash on hand vs. the *initial* shortfall. For any debt smaller than the player's cash on hand
+   * (the common case — e.g. $48 cash, $2 short of a $50 payment), `player.cash < amountNeeded` is
+   * false from the very first check, so the loop body never runs even once and a solvent-looking
+   * player goes straight to bankruptcy without the bot ever getting a chance to mortgage anything.
+   * Recomputing a fixed `target` up front (the true total the player must reach) fixes both that
+   * and the same bug's second half — the old code also passed the bot a `amountNeeded - player.cash`
+   * argument that went *negative* on any iteration after the first, once cash had grown past the
+   * stale initial shortfall figure.
+   *
+   * Falls back to automatically selling down the player's own most-developed property (see
+   * `anySellableProperty`) once the bot has no mortgageable property left to offer — every bot's
+   * `raiseCash` can only name a house-free property (see its `BotDecisions` doc comment), so a
+   * player whose cash is tied up in houses/hotels had no legal way to raise cash at all before
+   * this, and could go bankrupt over a trivial shortfall while still holding substantial
+   * liquidatable equity. Selling a house can itself free a property up for the bot to mortgage on
+   * the next iteration (it re-asks the bot first every time), so the two mechanisms chain
+   * naturally without extra bookkeeping.
+   */
   private raiseCash(player: PlayerState, amountNeeded: number) {
     const bot = this.bots.get(player.id)!;
-    for (let i = 0; i < MAX_FINANCE_ACTIONS_PER_TURN && player.cash < amountNeeded; i++) {
-      const choice = bot.raiseCash(this.getSnapshot(), player.id, amountNeeded - player.cash);
-      if (choice === null || !this.canMortgage(player.id, choice)) return;
-      this.doMortgage(player, choice);
+    const target = player.cash + amountNeeded; // the true total cash the player must reach
+    for (let i = 0; i < MAX_FINANCE_ACTIONS_PER_TURN && player.cash < target; i++) {
+      const choice = bot.raiseCash(this.getSnapshot(), player.id, target - player.cash);
+      if (choice !== null && this.canMortgage(player.id, choice)) {
+        this.doMortgage(player, choice);
+        continue;
+      }
+      const sellable = this.anySellableProperty(player.id);
+      if (sellable === null) return;
+      this.trySellHouse(player, sellable);
     }
+  }
+
+  /** Any one of `playerId`'s own properties currently eligible to sell a house/hotel from (the
+   * same even-building-in-reverse rule `trySellHouse` itself enforces) — a generic last-resort
+   * candidate, not a considered choice of *which* one, since this only fires once the player's own
+   * bot has already failed to offer a way to cover a shortfall. */
+  private anySellableProperty(playerId: string): number | null {
+    for (const [group, indices] of Object.entries(GROUP_MEMBERS)) {
+      if (group === "railroad" || group === "utility") continue;
+      const maxLevel = Math.max(...indices.map((i) => this.improvementLevel(this.state.ownership[i])));
+      if (maxLevel === 0) continue;
+      for (const index of indices) {
+        const record = this.state.ownership[index];
+        if (record.ownerId !== playerId) continue;
+        if (this.improvementLevel(record) < maxLevel) continue;
+        return index;
+      }
+    }
+    return null;
   }
 
   private runFinancePhase(player: PlayerState) {

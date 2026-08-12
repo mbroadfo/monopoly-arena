@@ -13,6 +13,7 @@ const { values } = parseArgs({
     maxTurns: { type: "string" },
     noCoaching: { type: "boolean" },
     distanceThreshold: { type: "string" },
+    selfPlay: { type: "boolean" },
   },
 });
 
@@ -23,12 +24,18 @@ const seed = values.seed ? parseInt(values.seed, 10) : 1;
 const maxTurnsPerGame = values.maxTurns ? parseInt(values.maxTurns, 10) : 1000;
 const coaching = !values.noCoaching;
 const speciesDistanceThreshold = values.distanceThreshold ? parseFloat(values.distanceThreshold) : undefined;
+const selfPlay = values.selfPlay ?? false;
 
 console.log(
   `Training NEAT: population=${population} generations=${generations} gamesPerGenome=${gamesPerGenome} ` +
-    `(${population * generations * gamesPerGenome} games total, seed ${seed}, coaching ${coaching ? "on" : "off"})`,
+    `(${population * generations * gamesPerGenome} games total, seed ${seed}, coaching ${coaching ? "on" : "off"}, ` +
+    `selfPlay ${selfPlay ? "on" : "off"})`,
 );
-console.log("Fitness = win bonus + net worth at game end, vs. a fixed Naive/Random/OrangeRush roster.\n");
+console.log(
+  selfPlay
+    ? "Fitness = win bonus + net worth, half vs. the persistent champion + Naive/OrangeRush, half vs. Naive/Random/OrangeRush.\n"
+    : "Fitness = win bonus + net worth at game end, vs. a fixed Naive/Random/OrangeRush roster.\n",
+);
 
 const start = Date.now();
 const { champion, history } = trainNeat({
@@ -39,6 +46,7 @@ const { champion, history } = trainNeat({
   maxTurnsPerGame,
   coaching,
   speciesDistanceThreshold,
+  selfPlay,
   onGeneration: (stats) => {
     console.log(
       `  gen ${String(stats.generation).padStart(3)}  best ${stats.bestFitness.toFixed(1).padStart(9)}  ` +

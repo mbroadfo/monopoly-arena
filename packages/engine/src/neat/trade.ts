@@ -1,5 +1,5 @@
 import { GROUP_MEMBERS } from "../board.js";
-import { findMonopolyCompletionTargets, propertyValue } from "../bots/shared.js";
+import { findMonopolyCompletionTargets, maxOpponentRentThreat, propertyValue } from "../bots/shared.js";
 import type { GameState, Ownable, TradeOffer } from "../types.js";
 import { scoreProperty } from "./encoding.js";
 import type { Genome } from "./types.js";
@@ -84,6 +84,40 @@ export function generateTradeCandidates(state: GameState, playerId: string): Tra
     }
   }
 
+  // Railroad/utility acquisition — excluded from findMonopolyCompletionTargets (rent there scales
+  // with count owned rather than a single completed set), which used to mean NEAT could *never*
+  // propose trading for a missing railroad even though accumulating them is exactly how
+  // RailroadBaron dominates. Any opponent-held member of an income group where this player already
+  // owns at least one piece (so the scaling benefit is real, not speculative) is a candidate, at
+  // premiums scaled to the group's total value like the color-group offers above.
+  for (const group of ["railroad", "utility"] as const) {
+    const indices = GROUP_MEMBERS[group];
+    const ownedByMe = indices.filter((i) => state.ownership[i].ownerId === playerId).length;
+    if (ownedByMe === 0) continue;
+    const groupValue = propertyValue(state, indices);
+
+    for (const index of indices) {
+      const record = state.ownership[index];
+      if (!record.ownerId || record.ownerId === playerId) continue;
+      const space = state.spaces[index] as Ownable;
+      for (const fraction of GROUP_VALUE_PREMIUM_FRACTIONS) {
+        const offeredCash = Math.round(space.price + fraction * groupValue);
+        if (offeredCash > player.cash) continue;
+        candidates.push({
+          fromPlayerId: playerId,
+          toPlayerId: record.ownerId,
+          offeredProperties: [],
+          offeredCash,
+          offeredGetOutOfJailFreeCards: 0,
+          requestedProperties: [index],
+          requestedCash: 0,
+          requestedGetOutOfJailFreeCards: 0,
+          conditions: [],
+        });
+      }
+    }
+  }
+
   return candidates;
 }
 
@@ -91,12 +125,32 @@ export interface TradeCandidateScore {
   offer: TradeOffer;
   myGain: number;
   counterpartyGain: number;
-  /** min(myGain, counterpartyGain) — high only when the deal looks good from both sides, which is
-   * the actual substance of "fair, within boundaries" rather than just self-interested. */
+  /** min(myGain, counterpartyGain) — high only when the deal looks good from both sides. Kept as a
+   * secondary signal (a mutually-great deal is the most likely to actually execute), but no longer
+   * the ranking criterion: `createNeatBot.proposeTrade` extracts the most self-favorable deal the
+   * counterparty is still predicted to accept, which is where leverage actually shows up. */
   fairness: number;
 }
 
 const CASH_SCALE = 1500; // matches encoding.ts's own cash-normalization convention
+
+/**
+ * How much more than face value each incremental dollar is worth to `playerId` right now, in
+ * [0, 1] — the leverage mechanism behind `scoreTradeCandidate`. A player whose cash comfortably
+ * covers two landings on the worst rent any opponent could charge (`maxOpponentRentThreat`) has
+ * pressure 0: cash is worth its face value, no more. A player who couldn't survive even one such
+ * landing approaches 1: cash in hand is what stands between them and bankruptcy, so a deal that
+ * delivers cash is worth accepting on worse-than-face terms — and a deal that drains cash hurts
+ * more than its face amount. This is how real players negotiate: the desperate side takes the
+ * lopsided deal because their alternative is worse, and the comfortable side knows it can press.
+ */
+export function cashPressure(state: GameState, playerId: string): number {
+  const player = state.players.find((p) => p.id === playerId)!;
+  const threat = maxOpponentRentThreat(state, playerId);
+  if (threat <= 0) return 0;
+  const cushion = player.cash / (threat * 2);
+  return Math.max(0, Math.min(1, 1 - cushion));
+}
 
 function valueTo(genome: Genome, state: GameState, viewerId: string, spaceIndices: number[]): number {
   return spaceIndices.reduce((sum, i) => sum + scoreProperty(genome, state, viewerId, i), 0);
@@ -107,20 +161,31 @@ function valueTo(genome: Genome, state: GameState, viewerId: string, spaceIndice
  * buy/bid/build — no separate evolved output needed. `offer.fromPlayerId`/`toPlayerId` (not a
  * separately-passed player id) determine which side is "mine" vs. "the counterparty's", so this
  * gives the same answer regardless of which of the two players' bot calls it — `proposeTrade`
- * reads `myGain`/`fairness`, `evaluateTrade` (called on the receiving player) reads
- * `counterpartyGain`.
+ * reads `myGain` (and predicted acceptability via `counterpartyGain`), `evaluateTrade` (called on
+ * the receiving player) reads `counterpartyGain`.
+ *
+ * Each side's cash delta is scaled by their own `cashPressure` — a desperate player's received
+ * cash counts for up to double face value (and cash paid out hurts up to double), so the same
+ * nominal offer scores very differently depending on who's under threat. That asymmetry is what
+ * lets a proposer's ranking legitimately favor lopsided deals against a cornered opponent, and
+ * what makes a cornered evaluator accept them — positions of strength and leverage, not flat
+ * fairness.
  */
 export function scoreTradeCandidate(genome: Genome, state: GameState, offer: TradeOffer): TradeCandidateScore {
   const proposerId = offer.fromPlayerId;
   const counterpartyId = offer.toPlayerId;
-  const cashDelta = (offer.requestedCash - offer.offeredCash) / CASH_SCALE;
+  const cashToProposer = (offer.requestedCash - offer.offeredCash) / CASH_SCALE; // negative when the proposer pays
+  const proposerCashWeight = 1 + cashPressure(state, proposerId);
+  const counterpartyCashWeight = 1 + cashPressure(state, counterpartyId);
 
   const myGain =
-    valueTo(genome, state, proposerId, offer.requestedProperties) - valueTo(genome, state, proposerId, offer.offeredProperties) + cashDelta;
+    valueTo(genome, state, proposerId, offer.requestedProperties) -
+    valueTo(genome, state, proposerId, offer.offeredProperties) +
+    cashToProposer * proposerCashWeight;
   const counterpartyGain =
     valueTo(genome, state, counterpartyId, offer.offeredProperties) -
     valueTo(genome, state, counterpartyId, offer.requestedProperties) -
-    cashDelta;
+    cashToProposer * counterpartyCashWeight;
 
   return { offer, myGain, counterpartyGain, fairness: Math.min(myGain, counterpartyGain) };
 }

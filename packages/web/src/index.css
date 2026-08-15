@@ -86,9 +86,12 @@ body {
   display: grid;
   /* grid-template-columns/rows are set inline from Board.tsx's EDGE_DEPTH_RATIO — see the
      comment there for why (calc() + var() + fr is unreliable across browsers). */
-  /* Capped by viewport height (not column width — .board-column shrink-wraps to this, so a
-     percentage term here would be circular) so the page never needs to scroll. */
-  width: min(1100px, calc(100vh - 50px));
+  /* Capped by viewport height AND width (not *column* width — .board-column shrink-wraps to
+     this, so a percentage-of-parent term would be circular; 100vw isn't circular the same way,
+     since it references the viewport directly) so the page never needs to scroll vertically, and
+     growing tall-viewport boards don't starve .properties-column/.side-column of the ~930px
+     (440 + 440 + gaps) they need and force them to wrap under the board instead of beside it. */
+  width: min(1100px, calc(100vh - 50px), calc(100vw - 960px));
   aspect-ratio: 1 / 1;
   background: #0b3d2e;
   border: 4px solid #06251b;
@@ -569,6 +572,19 @@ body {
   margin-left: auto;
 }
 
+/* Deliberately not .secondary for either state — that class carries margin-left:auto (built for
+   pushing Reset to the row's right edge), which would make the Save button's position visibly
+   jump left/right as it toggles between these two states. Same background as .secondary for the
+   "already saved" state, just without inheriting its layout side-effect. */
+.controls button.champion-save-ready {
+  background: #43a047;
+  border-color: #2e7d32;
+}
+
+.controls button.champion-already-saved {
+  background: #444;
+}
+
 .controls button:disabled {
   opacity: 0.5;
   cursor: default;
@@ -585,6 +601,20 @@ body {
 
 .speed-control input[type="range"] {
   width: 64px;
+}
+
+.speed-control.disabled {
+  opacity: 0.4;
+}
+
+.turbo-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: #ccc;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .animate-toggle {
@@ -775,6 +805,12 @@ body {
 .bankroll-gridline {
   stroke: #333;
   stroke-width: 1;
+}
+
+.bankroll-zero-line {
+  stroke: #666;
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
 }
 
 .bankroll-axis-label {
@@ -1041,4 +1077,559 @@ body {
 .prop-badge.mortgaged {
   background: #555;
   color: #fff;
+}
+
+/* --- View switch ---
+   Lives inside each screen's own side panel (.properties-column / .training-side) instead of as
+   a page-level bar above .layout — a standalone bar there added its own row of height, pushing
+   .layout's viewport-relative sizing (e.g. .board-grid's width calc, which assumes near-zero top
+   offset) out from under itself and cutting the board off the bottom of the screen. */
+
+.view-switch {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.view-switch button {
+  flex: 1;
+  padding: 6px 0;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: #262626;
+  color: #aaa;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.view-switch button.active {
+  background: #2a9d8f;
+  border-color: #2a9d8f;
+  color: #fff;
+}
+
+/* --- Training screen --- */
+
+/* .training-screen deliberately has no max-width/margin/padding of its own — it's a direct child
+   of .app (same as .layout on the Play screen), which already establishes that box. Duplicating
+   it here doubled the left inset versus .properties-column, so .training-side's left edge didn't
+   actually land at the same x-position as .properties-column's despite matching widths. */
+
+.training-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+
+.training-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.training-stat-label {
+  font-size: 0.7rem;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.training-stat-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+/* A 2x2 grid, not the Play screen's free-flowing .controls row — lines its button edges up
+   directly under .training-stats' own 2x2 grid instead of wrapping to whatever widths the button
+   labels happen to need. */
+.training-body {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+/* Boards + network diagram, stacked in their own column — sized as a unit (see
+   .mini-board-grid-wrapper's own max-width comment) so the diagram uses the boards' width
+   instead of the sidebar's. */
+.training-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1 1 auto;
+  max-width: 1360px;
+}
+
+.mini-board-grid-wrapper {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  /* .training-side (440) + gap (20) + this must stay under .app's ~1836px content width (1900
+     max-width minus its 64px horizontal padding) or .training-body wraps them onto separate rows
+     instead of side by side — exactly the bug fixed earlier by capping .board-grid's own width. */
+  max-width: 1360px;
+}
+
+/* Sits directly beneath the boards, in .training-main, using their own width — not squeezed into
+   the 440px sidebar next to the fitness chart, which just meant "stacked under a narrow chart"
+   rather than "next to" anything. Styled to match .bankroll-chart's own card convention (#111, 8px
+   radius) instead of a separately-bordered block, so it reads as one more panel, not bolted on. */
+.training-topology {
+  background: #111;
+  border-radius: 8px;
+  padding: 6px 12px 4px;
+}
+
+.training-topology h2 {
+  margin: 0 0 2px;
+  font-size: 0.75rem;
+  color: #cde8df;
+}
+
+.training-topology-empty {
+  color: #666;
+  font-size: 0.8rem;
+  margin: 8px 0;
+}
+
+.genome-topology-svg {
+  display: block;
+  width: 100%;
+  /* Matches the component's VIEW_WIDTH/VIEW_HEIGHT exactly via the CSS aspect-ratio property
+     rather than a max-height (which, combined with a definite width:100%, doesn't reliably force
+     a matching height on a replaced element like <svg> — it can letterbox instead of scaling). */
+  aspect-ratio: 1200 / 210;
+  height: auto;
+}
+
+.genome-topology-node {
+  stroke: #06251b;
+  stroke-width: 1;
+  cursor: pointer;
+  transition: r 0.1s ease;
+}
+
+.genome-topology-node.input {
+  fill: #4fc3f7;
+}
+
+.genome-topology-node.hidden {
+  fill: #999;
+}
+
+.genome-topology-node.output {
+  fill: #ffd54f;
+}
+
+.genome-topology-node.related {
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+
+.genome-topology-conn {
+  opacity: 0.45;
+  transition: opacity 0.1s ease;
+}
+
+.genome-topology-conn.positive {
+  stroke: #4fc3f7;
+}
+
+.genome-topology-conn.negative {
+  stroke: #ff8a65;
+}
+
+.genome-topology-conn.disabled {
+  stroke: #555;
+  stroke-dasharray: 3 3;
+  opacity: 0.25;
+}
+
+.genome-topology-conn.touched {
+  opacity: 1;
+}
+
+.genome-topology-conn.dimmed {
+  opacity: 0.06;
+}
+
+.genome-topology-label {
+  font-size: 8px;
+  fill: #9db8ac;
+  cursor: pointer;
+}
+
+.genome-topology-label.active {
+  fill: #fff;
+  font-weight: 700;
+}
+
+.genome-topology-label.output {
+  fill: #e8d9a0;
+  font-weight: 600;
+}
+
+.genome-topology-label.output.active {
+  fill: #fff;
+}
+
+.genome-topology-caption {
+  font-size: 9px;
+  fill: #6a8a7c;
+}
+
+.genome-topology-tooltip rect {
+  fill: #0b0b0b;
+  stroke: rgba(255, 255, 255, 0.2);
+  stroke-width: 0.75;
+}
+
+.genome-topology-tooltip text {
+  font-size: 9px;
+  fill: #ccc;
+  font-weight: 600;
+}
+
+/* The node actually under the cursor, as opposed to an ancestor/descendant swept up in the trace —
+   slightly brighter so it's clear which one you're pointing at versus what it's connected to. */
+.genome-topology-tooltip.primary rect {
+  stroke: #fff;
+  stroke-width: 1;
+}
+
+.genome-topology-tooltip.primary text {
+  fill: #fff;
+}
+
+.mini-board {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: #0b3d2e;
+  border: 2px solid #06251b;
+  border-radius: 8px;
+  padding: 6px;
+  position: relative;
+}
+
+.mini-board-idle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b3d2e;
+  border-style: dashed;
+  color: #5a8a78;
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.mini-board.done {
+  opacity: 0.6;
+}
+
+.mini-board-done-badge {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 0.55rem;
+  letter-spacing: 0.03em;
+  color: #cde8df;
+  white-space: nowrap;
+}
+
+.mini-board-label {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  right: 6px;
+  font-size: 0.6rem;
+  color: #cde8df;
+  z-index: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-board-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(11, 1fr);
+  grid-template-rows: repeat(11, 1fr);
+  width: 100%;
+  height: 100%;
+  gap: 1px;
+}
+
+.mini-board-tile {
+  position: relative;
+  background: #0b3d2e;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.mini-board-tile-bar {
+  position: absolute;
+}
+
+/* Bar sits on whichever side of the tile faces the board's center — bottom-row tiles' center-facing
+   side is their top, top-row tiles' is their bottom, and so on — matching Board.tsx's tile-color-bar. */
+.mini-board-tile-bar-bottom {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40%;
+}
+
+.mini-board-tile-bar-top {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40%;
+}
+
+.mini-board-tile-bar-left {
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 40%;
+}
+
+.mini-board-tile-bar-right {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 40%;
+}
+
+.mini-board-token {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px solid #111;
+  z-index: 1;
+}
+
+/* Standings card fills the board's interior — the 9x9 area spaceToGrid never places a tile on.
+   overflow:hidden is load-bearing, not decorative: the card is a flex column centered within a
+   fixed-size box (the grid area), and flex children don't clip to their container by default — at
+   the smaller per-board size the 4-column grid produces, the card's content could otherwise spill
+   out both above and below its box, over the ring of tiles. Margin/padding/gap trimmed down too,
+   so it actually fits rather than relying on the clip alone to hide an awkward cutoff. */
+.mini-board-standings {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  gap: 3px;
+  margin: 5%;
+  padding: 5px 7px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+/* Genome identity + fitness used to float as a separate overlay pinned over the tile ring — moved
+   in here as the card's own header so a board's text all lives in one calm place on the felt. */
+.mini-board-standings-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  margin-bottom: 2px;
+  overflow: hidden;
+}
+
+.mini-board-standings-genome {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #cde8df;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-board-standings-turn {
+  font-size: 0.54rem;
+  letter-spacing: 0.03em;
+  color: #8fae9f;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.mini-board-standings-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 4px;
+  border-left: 2px solid var(--player-color);
+  font-size: 0.6rem;
+  color: #ddd;
+}
+
+/* Fixed width regardless of contents (empty, jail icon, monopoly badge, or both) — so the value
+   bar to its right always starts at the same x on every row instead of shifting per-player. */
+.mini-board-status-slot {
+  flex: 0 0 32px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.mini-board-jail-icon {
+  flex-shrink: 0;
+  color: #e0a835;
+}
+
+.mini-board-standings-row.current {
+  color: #fff;
+  font-weight: 700;
+  border-left-width: 3px;
+}
+
+.mini-board-standings-row.bankrupt {
+  color: #666;
+  border-left-color: #3a3a3a;
+}
+
+.mini-board-standings-name {
+  flex: 0 1 34%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-board-monopoly-badge {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  color: #ffd54f;
+  font-size: 0.58rem;
+  font-weight: 700;
+}
+
+.mini-board-value-track {
+  flex: 1;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mini-board-value-fill {
+  display: flex;
+  height: 100%;
+  border-radius: 4px;
+  overflow: hidden;
+  transition: width 0.25s ease;
+}
+
+.mini-board-standings-out {
+  flex: 1;
+  text-align: right;
+  color: #888;
+  font-size: 0.58rem;
+  letter-spacing: 0.05em;
+}
+
+/* Matches .properties-column's width exactly (440px, min 380px) — on the same left edge of the
+   screen, so the ViewSwitch inside it renders at the same size and position switching either way,
+   instead of jumping between a 440px-wide left tab and a narrower right-hand one. */
+.training-side {
+  flex: 0 0 440px;
+  min-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.training-leaderboard h2,
+.training-chart h2,
+.training-champions h2 {
+  font-size: 0.9rem;
+  margin: 0 0 6px;
+  color: #ccc;
+}
+
+.training-champions-empty {
+  color: #666;
+  font-size: 0.75rem;
+  margin: 4px 0;
+}
+
+/* Internally scrollable, capped, rather than letting the sidebar grow indefinitely taller as more
+   champions get saved over time — same reasoning as everything else on this page fighting to stay
+   under the board grid's own height. */
+.training-champions-list {
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.champion-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+.champion-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.champion-row-name {
+  font-size: 0.78rem;
+  color: #eee;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.champion-row-meta {
+  font-size: 0.65rem;
+  color: #888;
+}
+
+.champion-row-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.champion-row-actions button {
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid #555;
+  background: #2a9d8f;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.7rem;
+}
+
+.champion-row-actions button.secondary {
+  background: #444;
 }

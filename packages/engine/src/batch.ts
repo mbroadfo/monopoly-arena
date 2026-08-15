@@ -70,7 +70,12 @@ function countMonopolies(state: GameState, playerId: string): number {
     .filter(([, indices]) => indices.every((i) => state.ownership[i].ownerId === playerId)).length;
 }
 
-function countFinanceActions(state: GameState, playerName: string): number {
+/** How many mortgage/unmortgage/sell-house log lines belong to `playerName` over a game — see
+ * `PlayerResult.financeActionCount`'s doc comment for why this matters. Exported so
+ * `neat/train.ts`'s `computeFitnessContribution` (and the web app's own in-browser training
+ * orchestrator, which builds fitness from raw `Game` instances rather than `runBatchSimulation`)
+ * can compute the identical figure without a second, potentially-drifting reimplementation. */
+export function countFinanceActions(state: GameState, playerName: string): number {
   const prefixes = [
     `${playerName} mortgages`,
     `${playerName} pays off the mortgage`,

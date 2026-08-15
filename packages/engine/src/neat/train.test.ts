@@ -1,5 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { trainNeat } from "./train.js";
+import { computeFitnessContribution, trainNeat } from "./train.js";
+
+describe("computeFitnessContribution", () => {
+  it("adds the win bonus only when won is true", () => {
+    const lost = computeFitnessContribution(1000, 0, false);
+    const won = computeFitnessContribution(1000, 0, true);
+    expect(won - lost).toBe(2000); // WIN_BONUS
+  });
+
+  it("subtracts a real, meaningful penalty per finance action", () => {
+    const clean = computeFitnessContribution(1000, 0, false);
+    const churned = computeFitnessContribution(1000, 50, false);
+    expect(clean - churned).toBe(500); // 50 actions * FINANCE_CHURN_PENALTY (10)
+  });
+
+  it("matches net worth alone when there's no win and no finance activity", () => {
+    expect(computeFitnessContribution(1234, 0, false)).toBe(1234);
+  });
+});
 
 describe("trainNeat", () => {
   it(

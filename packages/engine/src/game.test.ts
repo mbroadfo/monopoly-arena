@@ -559,6 +559,220 @@ describe("Game", () => {
     expect(stillOwnsOneBrown).toBe(true); // survived by selling a house, not by losing everything
   });
 
+  it("keeps a drawn Get Out of Jail Free card out of the deck until it's used, instead of discarding it immediately", () => {
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2; // every roll: d1=1, d2=2, total=3
+    };
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => false,
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+    const drawer: Bot = { name: "Drawer", ...passthrough };
+    const dummy: Bot = { name: "Dummy", ...passthrough };
+    const game = new Game({ playerNames: ["Drawer", "Dummy"], bots: [drawer, dummy], rng: fixedRoll });
+
+    // Chance/Community Chest deck order is deliberately not part of GameState (a real player
+    // doesn't know it either — see fromState's docstring), so there's no public way to observe
+    // "is this card still in the deck." Reaching into the private field is the only way to test
+    // this invariant directly rather than inferring it from incidental log text.
+    const chanceDeck = (game as unknown as { chanceDeck: { cards: unknown[]; discard: unknown[] } }).chanceDeck;
+    const accountedFor = () => chanceDeck.cards.length + chanceDeck.discard.length;
+    expect(accountedFor()).toBe(16); // nothing drawn yet
+
+    // Force Drawer onto Chance (4 + roll(3) = 7) every turn until the deck's one GOOJF card comes
+    // up — guaranteed within the first 16 draws, since nothing reshuffles until fully exhausted.
+    for (let i = 0; i < 16 && game.state.players[0].getOutOfJailFreeCards === 0; i++) {
+      game.state.currentPlayerIndex = 0;
+      game.state.players[0].position = 4;
+      game.playTurn();
+    }
+
+    expect(game.state.players[0].getOutOfJailFreeCards).toBe(1);
+    // Gone from both cards AND discard — not just moved from one to the other like every other
+    // card — so the deck's own accounted-for total permanently drops by one while it's held.
+    expect(accountedFor()).toBe(15);
+
+    // Keep drawing past a full reshuffle (16 more draws) — if the held card were still being
+    // discarded like before the fix, it would eventually reshuffle back in and get drawn again,
+    // bumping the credit count above 1.
+    for (let i = 0; i < 20; i++) {
+      game.state.currentPlayerIndex = 0;
+      game.state.players[0].position = 4;
+      game.playTurn();
+    }
+    expect(game.state.players[0].getOutOfJailFreeCards).toBe(1); // still exactly 1, never redrawn
+    expect(accountedFor()).toBe(15); // still missing exactly the one held card
+  });
+
+  it("returns a used Get Out of Jail Free card to the discard pile, not straight back into the live deck", () => {
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2;
+    };
+    let payToLeave = false;
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+    const drawer: Bot = { name: "Drawer", ...passthrough, shouldPayToLeaveJail: () => payToLeave };
+    const dummy: Bot = { name: "Dummy", ...passthrough, shouldPayToLeaveJail: () => false };
+    const game = new Game({ playerNames: ["Drawer", "Dummy"], bots: [drawer, dummy], rng: fixedRoll });
+
+    const chanceDeck = (game as unknown as { chanceDeck: { cards: unknown[]; discard: unknown[] } }).chanceDeck;
+
+    for (let i = 0; i < 16 && game.state.players[0].getOutOfJailFreeCards === 0; i++) {
+      game.state.currentPlayerIndex = 0;
+      game.state.players[0].position = 4;
+      game.playTurn();
+    }
+    expect(game.state.players[0].getOutOfJailFreeCards).toBe(1);
+
+    // Send Drawer to jail and have them use the card to leave.
+    payToLeave = true;
+    game.state.players[0].inJail = true;
+    game.state.players[0].jailTurns = 0;
+    game.state.players[0].position = 10;
+    game.state.currentPlayerIndex = 0;
+    game.playTurn();
+
+    expect(game.state.players[0].inJail).toBe(false);
+    expect(game.state.players[0].getOutOfJailFreeCards).toBe(0);
+    // Not necessarily the last log line — using the card grants a normal roll the same turn,
+    // which can trigger its own (later) log lines, e.g. an auction on wherever it lands.
+    expect(game.state.log.some((l) => l.includes("uses a Get Out of Jail Free card"))).toBe(true);
+    // Back in the discard pile specifically (not the live cards pile) — same place any other
+    // drawn card lands, only reshuffled into `cards` once the deck empties.
+    expect(chanceDeck.cards.length + chanceDeck.discard.length).toBe(16);
+    expect(chanceDeck.discard.some((c) => (c as { text: string }).text === "Get out of Jail Free")).toBe(true);
+  });
+
+  it("transfers a held Get Out of Jail Free card's deck bookkeeping in a trade, so the new holder's use returns it to the right deck", () => {
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2; // every roll: d1=1, d2=2, total=3
+    };
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+    };
+    const holder: Bot = {
+      name: "Holder",
+      ...passthrough,
+      shouldPayToLeaveJail: () => false,
+      proposeTrade: () => null,
+      evaluateTrade: () => true, // accepts Receiver's card-for-cash offer below
+    };
+    let payToLeave = false;
+    const receiver: Bot = {
+      name: "Receiver",
+      ...passthrough,
+      shouldPayToLeaveJail: () => payToLeave,
+      proposeTrade: (state, playerId) => {
+        if (state.players.find((p) => p.id === "p0")!.getOutOfJailFreeCards === 0) return null;
+        return {
+          fromPlayerId: playerId,
+          toPlayerId: "p0",
+          offeredProperties: [],
+          offeredCash: 100,
+          offeredGetOutOfJailFreeCards: 0,
+          requestedProperties: [],
+          requestedCash: 0,
+          requestedGetOutOfJailFreeCards: 1,
+          conditions: [],
+        };
+      },
+      evaluateTrade: () => false,
+    };
+    const game = new Game({ playerNames: ["Holder", "Receiver"], bots: [holder, receiver], rng: fixedRoll });
+
+    const chanceDeck = (game as unknown as { chanceDeck: { cards: unknown[]; discard: unknown[] } }).chanceDeck;
+
+    // Force Holder onto Chance (4 + roll(3) = 7) every one of their turns until they draw the card.
+    for (let i = 0; i < 16 && game.state.players[0].getOutOfJailFreeCards === 0; i++) {
+      game.state.currentPlayerIndex = 0;
+      game.state.players[0].position = 4;
+      game.playTurn(); // Holder.
+    }
+    expect(game.state.players[0].getOutOfJailFreeCards).toBe(1);
+
+    game.state.currentPlayerIndex = 1; // Receiver's turn — their proposeTrade fires here.
+    game.playTurn(); // Receiver proposes; Holder accepts; the card moves to Receiver.
+    expect(game.state.players[1].getOutOfJailFreeCards).toBe(1);
+    expect(game.state.players[0].getOutOfJailFreeCards).toBe(0);
+
+    // Receiver now uses the traded card to leave jail — it should return to Chance's discard
+    // (the deck it actually came from), proving the trade moved the deck-origin bookkeeping
+    // along with the card, not just the public counter (which would have looked identical either way).
+    payToLeave = true;
+    game.state.players[1].inJail = true;
+    game.state.players[1].jailTurns = 0;
+    game.state.players[1].position = 10;
+    game.state.currentPlayerIndex = 1;
+    game.playTurn(); // Receiver uses the card.
+
+    expect(game.state.players[1].getOutOfJailFreeCards).toBe(0);
+    expect(game.state.log.some((l) => l.includes("uses a Get Out of Jail Free card"))).toBe(true);
+    expect(chanceDeck.cards.length + chanceDeck.discard.length).toBe(16);
+    expect(chanceDeck.discard.some((c) => (c as { text: string }).text === "Get out of Jail Free")).toBe(true);
+  });
+
+  it("returns a bankrupt-to-the-bank player's held Get Out of Jail Free card to the deck instead of losing it forever", () => {
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2; // every roll: d1=1, d2=2, total=3
+    };
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => false,
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+    const drawer: Bot = { name: "Drawer", ...passthrough };
+    const dummy: Bot = { name: "Dummy", ...passthrough };
+    const game = new Game({ playerNames: ["Drawer", "Dummy"], bots: [drawer, dummy], rng: fixedRoll });
+
+    const chanceDeck = (game as unknown as { chanceDeck: { cards: unknown[]; discard: unknown[] } }).chanceDeck;
+
+    for (let i = 0; i < 16 && game.state.players[0].getOutOfJailFreeCards === 0; i++) {
+      game.state.currentPlayerIndex = 0;
+      game.state.players[0].position = 4;
+      game.playTurn(); // Drawer.
+    }
+    expect(game.state.players[0].getOutOfJailFreeCards).toBe(1);
+    expect(chanceDeck.cards.length + chanceDeck.discard.length).toBe(15); // held, not in circulation
+
+    // Bankrupt Drawer to the bank directly, rather than engineering an exact unpayable landing —
+    // handleBankruptcy's card-return branch is the thing under test here, not how one gets there.
+    (game as unknown as { handleBankruptcy: (p: unknown, c: null) => void }).handleBankruptcy(game.state.players[0], null);
+
+    expect(game.state.players[0].bankrupt).toBe(true);
+    expect(game.state.players[0].getOutOfJailFreeCards).toBe(0);
+    expect(chanceDeck.cards.length + chanceDeck.discard.length).toBe(16); // back in circulation
+  });
+
   it("starts every player with $1500 and no properties owned", () => {
     const game = new Game({
       playerNames: ["Alice", "Bob"],

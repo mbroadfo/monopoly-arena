@@ -24,6 +24,15 @@ export class InnovationTracker {
     this.splitCache.clear();
   }
 
+  /** The two counters that must survive a training run being persisted and resumed later (e.g.
+   * the web trainer saving to localStorage) — the dedup caches don't need to: they're cleared by
+   * `startGeneration()` every generation anyway, so a resumed run starting its next generation
+   * fresh has empty caches regardless, exactly as if it had never stopped. Feed this straight back
+   * into the constructor's `(startingInnovation, startingNodeId)` params to resume. */
+  snapshot(): { nextInnovation: number; nextNodeId: number } {
+    return { nextInnovation: this.nextInnovation, nextNodeId: this.nextNodeId };
+  }
+
   /** Innovation number for an add-connection mutation between two existing node ids. */
   forConnection(from: number, to: number): number {
     const key = `${from}->${to}`;

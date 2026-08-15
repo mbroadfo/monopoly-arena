@@ -19,3 +19,4 @@ export { createOrangeRushBot } from "./bots/orangeRush.js";
 export { createRailroadBaronBot } from "./bots/railroadBaron.js";
 export { createMonteCarloBot } from "./bots/monteCarlo.js";
 export { createNeatBot } from "./bots/neatBot.js";
+export { maxRentThreat } from "./bots/shared.js";

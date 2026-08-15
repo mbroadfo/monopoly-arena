@@ -9,6 +9,16 @@ const MARGIN = { top: 10, right: 10, bottom: 18, left: 40 };
 const PLOT_W = WIDTH - MARGIN.left - MARGIN.right;
 const PLOT_H = HEIGHT - MARGIN.top - MARGIN.bottom;
 
+/** Y-axis label formatting — handles the negative, million-scale range fitness (reused into this
+ * chart on the Training screen) can reach, which plain cash amounts never do. */
+function formatAxisValue(v: number): string {
+  const sign = v < 0 ? "-" : "";
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1000) return `${sign}$${Math.round(abs / 1000)}k`;
+  return `${sign}$${abs}`;
+}
+
 export function BankrollChart({
   history,
   players,
@@ -24,16 +34,27 @@ export function BankrollChart({
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
-  const { maxTurn, maxCash, linePoints } = useMemo(() => {
+  const { maxTurn, maxCash, minCash, linePoints } = useMemo(() => {
     const maxTurn = Math.max(1, history[history.length - 1]?.turn ?? 0);
-    const maxCash = Math.max(1500, ...history.flatMap((h) => h.cash)) * 1.08;
+    const values = history.flatMap((h) => h.cash);
+    // Real bankroll history never goes negative (bankruptcy zeroes cash, doesn't owe past 0), so
+    // dataMin is always 0 there and this behaves exactly as before. Fitness (reused into this same
+    // chart on the Training screen) very much can — a bankrupted-out genome scores a large negative
+    // penalty — so the floor can't just be assumed at 0 the way it used to be, or those points
+    // plot far below the visible plot area instead of showing where they actually are.
+    const dataMax = Math.max(1500, ...values);
+    const dataMin = Math.min(0, ...values);
+    const range = dataMax - dataMin || 1;
+    const maxCash = dataMax + range * 0.08;
+    const minCash = dataMin - range * 0.02;
+    const span = maxCash - minCash || 1;
     const linePoints = players.map((_, playerIndex) =>
       history.map((point) => ({
         x: MARGIN.left + (point.turn / maxTurn) * PLOT_W,
-        y: MARGIN.top + PLOT_H - (point.cash[playerIndex] / maxCash) * PLOT_H,
+        y: MARGIN.top + PLOT_H - ((point.cash[playerIndex] - minCash) / span) * PLOT_H,
       })),
     );
-    return { maxTurn, maxCash, linePoints };
+    return { maxTurn, maxCash, minCash, linePoints };
   }, [history, players]);
 
   const handleMove = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -50,7 +71,7 @@ export function BankrollChart({
   const hoverX = hoverPoint ? MARGIN.left + (hoverPoint.turn / maxTurn) * PLOT_W : null;
   const activeIndex = activeTurn !== undefined && activeTurn >= 0 && activeTurn < history.length ? activeTurn : null;
   const activeX = activeIndex !== null ? MARGIN.left + (history[activeIndex].turn / maxTurn) * PLOT_W : null;
-  const gridValues = [0, 0.5, 1].map((f) => Math.round(maxCash * f));
+  const gridValues = [0, 0.5, 1].map((f) => Math.round(minCash + (maxCash - minCash) * f));
   // Flip the tooltip to the left once it would run past the right edge of the plot.
   const tooltipOnLeft = hoverX !== null && hoverX > MARGIN.left + PLOT_W * 0.6;
 
@@ -72,16 +93,28 @@ export function BankrollChart({
         onMouseLeave={() => setHoverIndex(null)}
       >
         {gridValues.map((v) => {
-          const y = MARGIN.top + PLOT_H - (v / maxCash) * PLOT_H;
+          const y = MARGIN.top + PLOT_H - ((v - minCash) / (maxCash - minCash || 1)) * PLOT_H;
           return (
             <g key={v}>
               <line x1={MARGIN.left} y1={y} x2={WIDTH - MARGIN.right} y2={y} className="bankroll-gridline" />
               <text x={MARGIN.left - 5} y={y + 3} className="bankroll-axis-label" textAnchor="end">
-                ${v >= 1000 ? `${Math.round(v / 1000)}k` : v}
+                {formatAxisValue(v)}
               </text>
             </g>
           );
         })}
+        {/* A dedicated zero-line whenever the plotted range actually straddles it — the fitness
+            reuse case can run entirely negative (a whole generation of bankrupted-out genomes),
+            where "$0" would otherwise just be one of three grid lines with no special meaning. */}
+        {minCash < 0 && maxCash > 0 && (
+          <line
+            x1={MARGIN.left}
+            y1={MARGIN.top + PLOT_H - ((0 - minCash) / (maxCash - minCash || 1)) * PLOT_H}
+            x2={WIDTH - MARGIN.right}
+            y2={MARGIN.top + PLOT_H - ((0 - minCash) / (maxCash - minCash || 1)) * PLOT_H}
+            className="bankroll-zero-line"
+          />
+        )}
         <text x={MARGIN.left} y={HEIGHT - 3} className="bankroll-axis-label">
           Turn 0
         </text>

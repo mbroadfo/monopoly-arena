@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { baseState } from "../testFixtures.js";
-import { maxOpponentRentThreat } from "./shared.js";
+import { maxOpponentRentThreat, maxRentThreat } from "./shared.js";
 
 function owned(ownerId: string, overrides: { houses?: number; hotel?: boolean; mortgaged?: boolean } = {}) {
   return { ownerId, houses: overrides.houses ?? 0, hotel: overrides.hotel ?? false, mortgaged: overrides.mortgaged ?? false };
@@ -49,5 +49,31 @@ describe("maxOpponentRentThreat", () => {
     state.ownership[5] = owned("p1");
     state.ownership[15] = owned("p1");
     expect(maxOpponentRentThreat(state, "p0")).toBe(50); // 25 * 2^(2-1)
+  });
+});
+
+describe("maxRentThreat", () => {
+  it("is 0 when the player owns nothing", () => {
+    const state = baseState();
+    expect(maxRentThreat(state, "p0")).toBe(0);
+  });
+
+  it("finds the single highest rent across the player's own holdings", () => {
+    const state = baseState();
+    state.ownership[1] = owned("p0"); // Mediterranean, base rent 2
+    state.ownership[39] = owned("p0"); // Boardwalk, base rent 50
+    expect(maxRentThreat(state, "p0")).toBe(50);
+  });
+
+  it("ignores mortgaged properties", () => {
+    const state = baseState();
+    state.ownership[39] = owned("p0", { mortgaged: true });
+    expect(maxRentThreat(state, "p0")).toBe(0);
+  });
+
+  it("ignores other players' holdings", () => {
+    const state = baseState();
+    state.ownership[39] = owned("p1");
+    expect(maxRentThreat(state, "p0")).toBe(0);
   });
 });

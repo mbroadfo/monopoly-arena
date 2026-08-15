@@ -1,6 +1,10 @@
-import { BOT_CHOICES } from "./useGame";
+import { getBotChoices } from "./useGame";
 
 export function LineupPicker({ botIndices, onChange }: { botIndices: number[]; onChange: (next: number[]) => void }) {
+  // Recomputed on every render rather than imported as a static list — picks up champions saved
+  // or deleted on the Train screen without needing a page reload.
+  const botChoices = getBotChoices();
+
   return (
     <div className="bot-select">
       {botIndices.map((choice, i) => (
@@ -14,7 +18,7 @@ export function LineupPicker({ botIndices, onChange }: { botIndices: number[]; o
               onChange(next);
             }}
           >
-            {BOT_CHOICES.map((bot, idx) => (
+            {botChoices.map((bot, idx) => (
               <option key={idx} value={idx}>
                 {bot.label}
               </option>

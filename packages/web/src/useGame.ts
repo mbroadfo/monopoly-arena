@@ -9,7 +9,9 @@ import {
   createRandomBot,
   type Bot,
   type GameState,
+  type Genome,
 } from "@monopoly-arena/engine";
+import { listChampions } from "./championGallery";
 
 // Animation timings scale with speedMs (the user's chosen ms-per-turn) rather than being fixed,
 // so cranking up playback speed visibly speeds up the token's movement too, not just the pause
@@ -123,6 +125,10 @@ async function animateTurn(
 
 export interface BotChoice {
   label: string;
+  // The in-game player name derived from this choice defaults to label.split(" ")[0] — fine for
+  // "Naive (buys + builds...)" -> "Naive", but a saved champion's label starts with an emoji/prefix
+  // that word-splitting would mangle, so champion entries set this explicitly to their real name.
+  shortName?: string;
   create: () => Bot;
 }
 
@@ -165,7 +171,7 @@ function toDisplayState(record: TurnRecord, live: GameState): GameState {
   return { ...record, spaces: live.spaces, log: live.log.slice(0, record.logLength) };
 }
 
-export const BOT_CHOICES: BotChoice[] = [
+const ALGORITHMIC_BOT_CHOICES: BotChoice[] = [
   { label: "Naive (buys + builds within reserve)", create: () => createNaiveBot() },
   { label: "Random (buys everything, builds with thin buffer)", create: () => createRandomBot() },
   { label: "OrangeRush (rushes orange/red, thin reserve)", create: () => createOrangeRushBot() },
@@ -174,7 +180,31 @@ export const BOT_CHOICES: BotChoice[] = [
   { label: "NEAT (evolved network scores buy/bid/build)", create: () => createNeatBot() },
 ];
 
-const NEAT_INDEX = BOT_CHOICES.findIndex((choice) => choice.label.startsWith("NEAT"));
+// Fixed position within the *algorithmic* roster specifically — champions are appended after it
+// (see getBotChoices), never inserted before, so this index stays stable regardless of how many
+// champions are currently saved.
+export const NEAT_INDEX = ALGORITHMIC_BOT_CHOICES.findIndex((choice) => choice.label.startsWith("NEAT"));
+
+/**
+ * The algorithmic roster plus every saved champion from the gallery, appended at the end — lets
+ * different champions from different training runs (or different points in the same run) face off
+ * against each other, or against the algorithmic bots, in the same lineup. Each plays with its own
+ * exact saved weights, unmodified — no personality/aggressiveness randomization like the generic
+ * "NEAT" choice above applies (that's for watching *a* trained style; this is "play exactly what I
+ * saved"). A function, not a cached constant, since the gallery can grow or shrink between renders
+ * (saving/deleting happens on the Train screen) and the lineup picker should reflect that without
+ * needing a page reload.
+ */
+export function getBotChoices(): BotChoice[] {
+  const champions = listChampions().map(
+    (c): BotChoice => ({
+      label: `🏆 ${c.name} — gen ${c.generation}`,
+      shortName: c.name,
+      create: () => createNeatBot(c.genome),
+    }),
+  );
+  return [...ALGORITHMIC_BOT_CHOICES, ...champions];
+}
 
 interface NeatPersonality {
   aggressiveness: number;
@@ -206,7 +236,14 @@ function neatPersonalities(count: number): NeatPersonality[] {
   });
 }
 
-function newGame(botIndices: number[]): Game {
+/**
+ * `customNeatGenome`, when given, replaces the *first* NEAT seat's usual champion-json-or-personality
+ * genome — the "adopt this champion" flow from the Training screen, which hands over an in-memory
+ * genome the user just watched evolve rather than one of the shipped defaults. Any additional NEAT
+ * seats still get their usual personality treatment.
+ */
+function newGame(botIndices: number[], customNeatGenome?: Genome): Game {
+  const choices = getBotChoices();
   const personalities = neatPersonalities(botIndices.filter((b) => b === NEAT_INDEX).length);
   let neatSeat = 0;
 
@@ -214,12 +251,19 @@ function newGame(botIndices: number[]): Game {
   const playerNames: string[] = [];
   botIndices.forEach((b, i) => {
     if (b === NEAT_INDEX) {
-      const personality = personalities[neatSeat++];
-      bots.push(createNeatBot(undefined, { aggressiveness: personality.aggressiveness }));
-      playerNames.push(`Neat (${personality.label}) ${i + 1}`);
+      const seatIndex = neatSeat++;
+      if (seatIndex === 0 && customNeatGenome) {
+        bots.push(createNeatBot(customNeatGenome));
+        playerNames.push(`Neat (Trained) ${i + 1}`);
+      } else {
+        const personality = personalities[seatIndex];
+        bots.push(createNeatBot(undefined, { aggressiveness: personality.aggressiveness }));
+        playerNames.push(`Neat (${personality.label}) ${i + 1}`);
+      }
     } else {
-      bots.push(BOT_CHOICES[b].create());
-      playerNames.push(`${BOT_CHOICES[b].label.split(" ")[0]} ${i + 1}`);
+      const choice = choices[b];
+      bots.push(choice.create());
+      playerNames.push(`${choice.shortName ?? choice.label.split(" ")[0]} ${i + 1}`);
     }
   });
 
@@ -322,8 +366,8 @@ export function useGame(initialBotIndices: number[] = [0, 1, 2, 3]) {
     [scrubTurn, turnRecords, liveState, speedMs, animationEnabled],
   );
 
-  const reset = useCallback((botIndices: number[]) => {
-    gameRef.current = newGame(botIndices);
+  const reset = useCallback((botIndices: number[], customNeatGenome?: Genome) => {
+    gameRef.current = newGame(botIndices, customNeatGenome);
     isAnimatingRef.current = false;
     setAnimating(false);
     setFadingPlayerId(null);

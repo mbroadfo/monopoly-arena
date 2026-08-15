@@ -24,14 +24,18 @@ interface Deck {
 /** Special rent charged by the two "advance to nearest X" Chance cards, in place of the normal formula. */
 type RentOverride = "double-railroad" | "utility-x10";
 
+/**
+ * Removes and returns the top card, reshuffling the discard pile back into the deck first if it's
+ * empty. Deliberately doesn't discard the drawn card itself — a "Get Out of Jail Free" card must
+ * stay out of circulation for as long as a player holds it unused (see `goojfHeld`), so the caller
+ * decides where the card goes next instead of this function assuming "straight to discard."
+ */
 function draw(deck: Deck, rng: Rng): Card {
   if (deck.cards.length === 0) {
     deck.cards = shuffle(deck.discard, rng);
     deck.discard = [];
   }
-  const card = deck.cards.shift()!;
-  deck.discard.push(card);
-  return card;
+  return deck.cards.shift()!;
 }
 
 function shuffle<T>(items: T[], rng: Rng): T[] {
@@ -68,12 +72,21 @@ export interface GameOptions {
   rng?: Rng;
 }
 
+/** Which player currently holds each deck's single "Get Out of Jail Free" card, or null if it's
+ * sitting in that deck's cards/discard instead — real Monopoly only ever has one physical GOOJF
+ * card per deck, out with at most one player at a time, never both in the deck and someone's hand. */
+interface GoojfHolder {
+  chance: { playerId: string; card: Card } | null;
+  communityChest: { playerId: string; card: Card } | null;
+}
+
 export class Game {
   state: GameState;
   private bots: Map<string, Bot> = new Map();
   private rng: Rng;
   private chanceDeck: Deck;
   private communityChestDeck: Deck;
+  private goojfHeld: GoojfHolder = { chance: null, communityChest: null };
 
   constructor(options: GameOptions) {
     if (options.playerNames.length !== options.bots.length) {
@@ -156,12 +169,29 @@ export class Game {
    * fresh-init IDs the throwaway construction generated), so bot identity survives the swap
    * correctly regardless of ID-generation details. Chance/Community Chest deck order isn't part of
    * `GameState`, so the resumed game gets a freshly-shuffled deck — the correct model, since a real
-   * player doesn't know deck order either.
+   * player doesn't know deck order either. `getOutOfJailFreeCards` totals *are* part of `GameState`
+   * though, and which specific deck each held card came from isn't recoverable — so any card a
+   * resumed player already holds gets pulled out of the fresh deck it would otherwise still be in
+   * (arbitrarily choosing whichever deck still has one to pull), preventing this resumed game from
+   * redrawing a card the state says is already spoken for. It won't have anywhere to return to on
+   * use here, but a `fromState` game is a throwaway hypothetical-future simulation, not the
+   * canonical game, so that's the right trade for keeping its own deck accounting internally
+   * consistent rather than perfectly provenanced.
    */
   static fromState(state: GameState, bots: Bot[], rng: Rng = Math.random): Game {
     const game = new Game({ playerNames: state.players.map((p) => p.name), bots, rng });
     game.state = structuredClone(state);
     game.bots = new Map(state.players.map((p, i) => [p.id, bots[i]]));
+
+    let alreadyHeld = state.players.reduce((sum, p) => sum + p.getOutOfJailFreeCards, 0);
+    for (const deck of [game.chanceDeck, game.communityChestDeck]) {
+      if (alreadyHeld <= 0) break;
+      const index = deck.cards.findIndex((c) => c.effect.kind === "get-out-of-jail-free");
+      if (index !== -1) {
+        deck.cards.splice(index, 1);
+        alreadyHeld--;
+      }
+    }
     return game;
   }
 
@@ -235,6 +265,7 @@ export class Game {
     const bot = this.bots.get(player.id)!;
     if (player.getOutOfJailFreeCards > 0 && bot.shouldPayToLeaveJail(this.getSnapshot(), player.id)) {
       player.getOutOfJailFreeCards -= 1;
+      this.releaseGoojfCard(player.id);
       player.inJail = false;
       player.jailTurns = 0;
       this.log(`${player.name} uses a Get Out of Jail Free card.`);
@@ -372,10 +403,10 @@ export class Game {
         this.payBank(player, space.amount ?? 0, `${space.name}`);
         return;
       case "chance":
-        this.applyCard(player, draw(this.chanceDeck, this.rng));
+        this.applyCard(player, this.drawAndFile(this.chanceDeck, "chance", player));
         return;
       case "community-chest":
-        this.applyCard(player, draw(this.communityChestDeck, this.rng));
+        this.applyCard(player, this.drawAndFile(this.communityChestDeck, "communityChest", player));
         return;
       case "property":
       case "railroad":
@@ -515,6 +546,45 @@ export class Game {
       return capped;
     }
     return rent;
+  }
+
+  /** Draws from `deck` and, if it's the "Get Out of Jail Free" card, files it under `goojfHeld`
+   * instead of the discard pile — see `GoojfHolder`. Every other card discards as normal. */
+  private drawAndFile(deck: Deck, deckKind: keyof GoojfHolder, player: PlayerState): Card {
+    const card = draw(deck, this.rng);
+    if (card.effect.kind === "get-out-of-jail-free") {
+      this.goojfHeld[deckKind] = { playerId: player.id, card };
+    } else {
+      deck.discard.push(card);
+    }
+    return card;
+  }
+
+  /** Returns whichever deck's "Get Out of Jail Free" card `playerId` holds (if any) to that
+   * deck's discard pile, freeing it to be reshuffled back into circulation. Called when a card is
+   * actually used to leave jail, or when its holder goes bankrupt to the bank. */
+  private releaseGoojfCard(playerId: string): void {
+    if (this.goojfHeld.chance?.playerId === playerId) {
+      this.chanceDeck.discard.push(this.goojfHeld.chance.card);
+      this.goojfHeld.chance = null;
+      return;
+    }
+    if (this.goojfHeld.communityChest?.playerId === playerId) {
+      this.communityChestDeck.discard.push(this.goojfHeld.communityChest.card);
+      this.goojfHeld.communityChest = null;
+    }
+  }
+
+  /** Moves one held "Get Out of Jail Free" card from `fromId` to `toId` without touching either
+   * deck — the physical card just changes hands (a trade, or a bankruptcy paid to a creditor). */
+  private transferGoojfCard(fromId: string, toId: string): void {
+    if (this.goojfHeld.chance?.playerId === fromId) {
+      this.goojfHeld.chance.playerId = toId;
+      return;
+    }
+    if (this.goojfHeld.communityChest?.playerId === fromId) {
+      this.goojfHeld.communityChest.playerId = toId;
+    }
   }
 
   private applyCard(player: PlayerState, card: Card) {
@@ -870,6 +940,8 @@ export class Game {
     to.cash += offer.offeredCash - offer.requestedCash;
     from.getOutOfJailFreeCards += offer.requestedGetOutOfJailFreeCards - offer.offeredGetOutOfJailFreeCards;
     to.getOutOfJailFreeCards += offer.offeredGetOutOfJailFreeCards - offer.requestedGetOutOfJailFreeCards;
+    for (let i = 0; i < offer.offeredGetOutOfJailFreeCards; i++) this.transferGoojfCard(from.id, to.id);
+    for (let i = 0; i < offer.requestedGetOutOfJailFreeCards; i++) this.transferGoojfCard(to.id, from.id);
 
     this.state.tradeConditions.push(...offer.conditions);
 
@@ -921,6 +993,14 @@ export class Game {
     if (creditor) {
       for (const group of groupsTransferred) this.checkMonopolyFormed(creditor, group);
     }
+    // Real rule: cards bankrupt-to-a-player transfer with everything else; bankrupt-to-the-bank
+    // returns them to the bottom of their deck, freeing them to be drawn again.
+    for (let i = 0; i < player.getOutOfJailFreeCards; i++) {
+      if (creditor) this.transferGoojfCard(player.id, creditor.id);
+      else this.releaseGoojfCard(player.id);
+    }
+    if (creditor) creditor.getOutOfJailFreeCards += player.getOutOfJailFreeCards;
+    player.getOutOfJailFreeCards = 0;
     player.cash = 0;
     this.checkForWinner();
   }

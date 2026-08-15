@@ -45,39 +45,56 @@ export function propertyValue(state: GameState, spaceIndices: number[]): number 
 }
 
 /**
+ * The rent `ownerId` could currently charge for `spaceIndex` at its current development level —
+ * shared by `maxOpponentRentThreat` and `maxRentThreat` so the two "worst single property" numbers
+ * (someone else's threat to me / my own threat to someone else) can't drift apart. Utility rent
+ * uses the average-dice-roll estimate (7 * multiplier) since there's no live roll to charge against
+ * here, matching `lookahead.ts`'s own convention for the same reason.
+ */
+function currentDevelopmentRent(state: GameState, spaceIndex: number, ownerId: string): number {
+  const record = state.ownership[spaceIndex];
+  const space = state.spaces[spaceIndex] as Ownable;
+  if (space.type === "railroad") {
+    const count = GROUP_MEMBERS.railroad.filter((i) => state.ownership[i].ownerId === ownerId).length;
+    return 25 * 2 ** (count - 1);
+  }
+  if (space.type === "utility") {
+    const count = GROUP_MEMBERS.utility.filter((i) => state.ownership[i].ownerId === ownerId).length;
+    return 7 * (count >= 2 ? 10 : 4);
+  }
+  if (record.hotel) return space.rent[5];
+  if (record.houses > 0) return space.rent[record.houses];
+  const hasMonopoly = GROUP_MEMBERS[space.group].every((i) => state.ownership[i].ownerId === ownerId);
+  return hasMonopoly ? space.rent[0] * 2 : space.rent[0];
+}
+
+/**
  * The single highest rent any active opponent could currently charge `playerId`, across all
  * their owned, unmortgaged properties at current development — a rough "how exposed am I right
  * now" figure in real dollars. Deliberately simple: ignores this player's own board position
  * (doesn't weight by landing probability, unlike `lookahead.ts`'s `expectedRentIncome`) and trade
  * rent conditions (waive/cap) — a worst-case number is the right shape for a reserve floor, not an
- * expected-value one. Utility rent uses the average-dice-roll estimate (7 * multiplier), matching
- * `lookahead.ts`'s own convention for the same reason.
+ * expected-value one.
  */
 export function maxOpponentRentThreat(state: GameState, playerId: string): number {
   let maxRent = 0;
   for (const opponent of state.players) {
     if (opponent.id === playerId || opponent.bankrupt) continue;
-    for (const [indexStr, record] of Object.entries(state.ownership)) {
-      if (record.ownerId !== opponent.id || record.mortgaged) continue;
-      const index = Number(indexStr);
-      const space = state.spaces[index] as Ownable;
-      let rent: number;
-      if (space.type === "railroad") {
-        const count = GROUP_MEMBERS.railroad.filter((i) => state.ownership[i].ownerId === opponent.id).length;
-        rent = 25 * 2 ** (count - 1);
-      } else if (space.type === "utility") {
-        const count = GROUP_MEMBERS.utility.filter((i) => state.ownership[i].ownerId === opponent.id).length;
-        rent = 7 * (count >= 2 ? 10 : 4);
-      } else if (record.hotel) {
-        rent = space.rent[5];
-      } else if (record.houses > 0) {
-        rent = space.rent[record.houses];
-      } else {
-        const hasMonopoly = GROUP_MEMBERS[space.group].every((i) => state.ownership[i].ownerId === opponent.id);
-        rent = hasMonopoly ? space.rent[0] * 2 : space.rent[0];
-      }
-      if (rent > maxRent) maxRent = rent;
-    }
+    maxRent = Math.max(maxRent, maxRentThreat(state, opponent.id));
+  }
+  return maxRent;
+}
+
+/**
+ * The single highest rent `playerId` could currently charge across their own owned, unmortgaged
+ * properties at current development — the mirror image of `maxOpponentRentThreat` (this player's
+ * own biggest offensive weapon right now, rather than the biggest threat aimed at them).
+ */
+export function maxRentThreat(state: GameState, playerId: string): number {
+  let maxRent = 0;
+  for (const [indexStr, record] of Object.entries(state.ownership)) {
+    if (record.ownerId !== playerId || record.mortgaged) continue;
+    maxRent = Math.max(maxRent, currentDevelopmentRent(state, Number(indexStr), playerId));
   }
   return maxRent;
 }

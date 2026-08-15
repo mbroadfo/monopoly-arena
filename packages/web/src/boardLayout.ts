@@ -16,6 +16,20 @@ export function isCorner(index: number): boolean {
   return index === 0 || index === 10 || index === 20 || index === 30;
 }
 
+export type Edge = "top" | "bottom" | "left" | "right";
+
+/**
+ * Which of the four sides a (non-corner) space sits on. A left/right tile is geometrically
+ * identical to a top/bottom tile with its two axes swapped — never rotated content into a
+ * mismatched box, just lay each one out in its own natural orientation.
+ */
+export function edgeOf(index: number): Edge {
+  const { col, row } = spaceToGrid(index);
+  if (row === 0) return "top";
+  if (row === 10) return "bottom";
+  return col === 0 ? "left" : "right";
+}
+
 // Board side = 9W + 2D (W = one along-edge tile, D = corner/edge depth) — matches Board.tsx's
 // BOARD_TEMPLATE, which lays out grid-template-columns/rows as this ratio in literal fr values.
 export const EDGE_DEPTH_RATIO = 2;
@@ -75,13 +89,17 @@ export function jailZoneAnchor(zone: "cell" | "visiting"): { left: number; top: 
   };
 }
 
+// red/orange/yellow nudged away from PLAYER_COLORS' red/amber/gold (below) — at a glance the two
+// palettes used to collide (e.g. group red #d32f2f vs player red #e63946), making an owned
+// same-hue-family property unreadable as "two layers, one color story." Still unmistakably the
+// same Monopoly color family, just enough lightness/saturation gap to stay distinct from a token.
 export const GROUP_COLORS: Record<ColorGroup, string> = {
   brown: "#8b4513",
   lightblue: "#aee2f0",
   pink: "#d93a96",
-  orange: "#f0a021",
-  red: "#d32f2f",
-  yellow: "#f5e642",
+  orange: "#ffa726",
+  red: "#b71c1c",
+  yellow: "#fff176",
   green: "#2e7d32",
   darkblue: "#1a3e8c",
   railroad: "#444444",

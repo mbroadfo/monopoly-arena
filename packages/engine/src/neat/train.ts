@@ -75,6 +75,19 @@ const DEFAULT_MAX_TURNS_PER_GAME = 1000;
 // game (as legitimate defensive play does), catastrophic for one that does it hundreds of times.
 const FINANCE_CHURN_PENALTY = 10;
 
+/**
+ * The fitness formula itself, pulled out as a pure numeric function so it has exactly one
+ * definition: `evaluateFitness` below feeds it `PlayerResult` fields already computed by
+ * `runBatchSimulation`, and the web app's in-browser training orchestrator (which steps raw
+ * `Game` instances directly rather than going through `runBatchSimulation`) can compute the same
+ * two inputs itself (`netWorth` from `lookahead.ts`, `countFinanceActions` from `batch.ts`, both
+ * already exported) and get an identical answer — not a hand-copied second definition that could
+ * quietly drift from this one.
+ */
+export function computeFitnessContribution(netWorthValue: number, financeActionCount: number, won: boolean): number {
+  return (won ? WIN_BONUS : 0) + netWorthValue - FINANCE_CHURN_PENALTY * financeActionCount;
+}
+
 const REFERENCE_ROSTER: BatchPlayer[] = [
   { name: "Naive", createBot: () => createNaiveBot() },
   { name: "Random", createBot: () => createRandomBot() },
@@ -100,7 +113,7 @@ function averageFitnessAgainst(genome: Genome, roster: BatchPlayer[], seed: numb
   for (const game of result.games) {
     const neatResult = game.players.find((p) => p.name === "Neat")!;
     const won = game.winnerName === "Neat";
-    total += (won ? WIN_BONUS : 0) + neatResult.netWorth - FINANCE_CHURN_PENALTY * neatResult.financeActionCount;
+    total += computeFitnessContribution(neatResult.netWorth, neatResult.financeActionCount, won);
   }
   return { total, count: result.games.length };
 }

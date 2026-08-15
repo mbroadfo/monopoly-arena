@@ -6,11 +6,13 @@ import {
   JAIL_SPACE_INDEX,
   PLAYER_COLORS,
   TOKEN_ICONS,
+  edgeOf,
   isCorner,
   jailZoneAnchor,
   spaceToGrid,
   spaceToPercent,
 } from "./boardLayout";
+import type { Edge } from "./boardLayout";
 import railroadIcon from "./assets/railroad.png";
 import communityChestIcon from "./assets/community-chest.png";
 import goIcon from "./assets/go.png";
@@ -20,20 +22,6 @@ import freeParkingIcon from "./assets/free-parking.png";
 import chanceIcon from "./assets/Chance.png";
 import chanceCardArt from "./assets/Chance-Card.png";
 import communityChestCardArt from "./assets/Community-Chest-Card.png";
-
-type Edge = "top" | "bottom" | "left" | "right";
-
-/**
- * Which of the four sides a (non-corner) space sits on. A left/right tile is geometrically
- * identical to a top/bottom tile with its two axes swapped — never rotated content into a
- * mismatched box, just lay each one out in its own natural orientation.
- */
-function edgeOf(index: number): Edge {
-  const { col, row } = spaceToGrid(index);
-  if (row === 0) return "top";
-  if (row === 10) return "bottom";
-  return col === 0 ? "left" : "right";
-}
 
 /**
  * Flex direction that lays out [color bar, icon, name, price] from the board's center outward

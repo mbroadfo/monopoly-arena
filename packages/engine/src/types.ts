@@ -181,6 +181,16 @@ export interface BotDecisions {
    * round-robin among still-active bidders, until only one remains or everyone has passed.
    */
   auctionBid(state: GameState, playerId: string, spaceIndex: number, currentBid: number, highBidderId: string | null): number | null;
+  /**
+   * Called during a house/hotel scarcity auction — the official rule for when the bank's supply
+   * (32 houses, 12 hotels total) is running low and more than one player currently wants a piece.
+   * The engine determines when this applies; the bot only says how much it's willing to pay for
+   * whatever it would otherwise build next (see `chooseHouseToBuild`). Return a bid strictly
+   * greater than currentBid to stay in, or null to pass. Called repeatedly, round-robin among
+   * still-active bidders, until only one remains or everyone has passed — same shape as
+   * `auctionBid`, minus a spaceIndex, since the piece isn't tied to one until someone wins it.
+   */
+  houseAuctionBid(state: GameState, playerId: string, currentBid: number, highBidderId: string | null): number | null;
   /** Called once per turn; return a trade to propose to another player, or null to skip. */
   proposeTrade(state: GameState, playerId: string): TradeOffer | null;
   /** Called on the other player's bot when this player is offered a trade. */

@@ -1,8 +1,36 @@
 import { GROUP_MEMBERS } from "../board.js";
 import type { Bot, FinanceAction, GameState, Ownable, PropertySpace, TradeOffer } from "../types.js";
-import { propertyValue } from "./shared.js";
+import { houseAuctionCeiling, propertyValue } from "./shared.js";
 
 const MIN_CASH_BUFFER = 50;
+// No particular urgency here either — bids only up to face houseCost, matching its "buys whatever
+// it can afford" character rather than fighting for a scarce piece.
+const HOUSE_AUCTION_MULTIPLIER = 1;
+
+const chooseHouseToBuild = (state: GameState, playerId: string): number | null => {
+  const player = state.players.find((p) => p.id === playerId)!;
+  const buildableGroups = Object.entries(GROUP_MEMBERS).filter(
+    ([group]) => group !== "railroad" && group !== "utility",
+  );
+
+  let bestChoice: { index: number; houses: number } | null = null;
+  for (const [, indices] of buildableGroups) {
+    const ownsAll = indices.every((i) => state.ownership[i].ownerId === playerId);
+    if (!ownsAll) continue;
+    if (indices.some((i) => state.ownership[i].mortgaged)) continue;
+    if (indices.some((i) => state.ownership[i].hotel)) continue;
+
+    for (const index of indices) {
+      const record = state.ownership[index];
+      const space = state.spaces[index] as PropertySpace;
+      if (player.cash - space.houseCost < MIN_CASH_BUFFER) continue;
+      if (bestChoice === null || record.houses < bestChoice.houses) {
+        bestChoice = { index, houses: record.houses };
+      }
+    }
+  }
+  return bestChoice ? bestChoice.index : null;
+};
 
 /**
  * Buys whatever it can afford and builds evenly across any monopoly it completes (keeping
@@ -16,31 +44,19 @@ export function createRandomBot(): Bot {
     shouldBuyProperty(_state: GameState, _playerId: string, _spaceIndex: number): boolean {
       return true;
     },
-    chooseHouseToBuild(state: GameState, playerId: string): number | null {
+    chooseHouseToBuild,
+    houseAuctionBid(state: GameState, playerId: string, currentBid: number): number | null {
       const player = state.players.find((p) => p.id === playerId)!;
-      const buildableGroups = Object.entries(GROUP_MEMBERS).filter(
-        ([group]) => group !== "railroad" && group !== "utility",
-      );
-
-      let bestChoice: { index: number; houses: number } | null = null;
-      for (const [, indices] of buildableGroups) {
-        const ownsAll = indices.every((i) => state.ownership[i].ownerId === playerId);
-        if (!ownsAll) continue;
-        if (indices.some((i) => state.ownership[i].mortgaged)) continue;
-        if (indices.some((i) => state.ownership[i].hotel)) continue;
-
-        for (const index of indices) {
-          const record = state.ownership[index];
-          const space = state.spaces[index] as PropertySpace;
-          if (player.cash - space.houseCost < MIN_CASH_BUFFER) continue;
-          if (bestChoice === null || record.houses < bestChoice.houses) {
-            bestChoice = { index, houses: record.houses };
-          }
-        }
-      }
-      return bestChoice ? bestChoice.index : null;
+      const target = chooseHouseToBuild(state, playerId);
+      if (target === null) return null;
+      const ceiling = houseAuctionCeiling(state, target, HOUSE_AUCTION_MULTIPLIER);
+      const nextBid = currentBid + 10;
+      if (nextBid > ceiling || nextBid > player.cash) return null;
+      return nextBid;
     },
     shouldPayToLeaveJail(_state: GameState, _playerId: string): boolean {
+      // Deliberately not graduated by board danger like the other reference bots — reckless by
+      // design, matching its always-buy, no-reserve-check character everywhere else.
       return true;
     },
     raiseCash(state: GameState, playerId: string, _amountNeeded: number): number | null {

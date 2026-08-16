@@ -51,6 +51,7 @@ export function createMonteCarloBot(options: MonteCarloBotOptions = {}): Bot {
     },
 
     chooseHouseToBuild: fallback.chooseHouseToBuild,
+    houseAuctionBid: fallback.houseAuctionBid,
     shouldPayToLeaveJail: fallback.shouldPayToLeaveJail,
     raiseCash: fallback.raiseCash,
     chooseFinanceAction: fallback.chooseFinanceAction,

@@ -1,8 +1,23 @@
 import { GROUP_MEMBERS } from "../board.js";
 import type { Bot, ColorGroup, FinanceAction, GameState, Ownable, PropertySpace, TradeOffer } from "../types.js";
-import { ownedMortgaged, propertyValue, unmortgageCost } from "./shared.js";
+import {
+  completesMonopolyFor,
+  findMutualMonopolyTargets,
+  houseAuctionCeiling,
+  MONOPOLY_COMPLETION_PREMIUM,
+  ownedMortgaged,
+  percentPropertiesUnowned,
+  propertyValue,
+  unmortgageCost,
+} from "./shared.js";
 
 const INCOME_GROUPS = new Set<ColorGroup>(["railroad", "utility"]);
+// The most risk-averse of the bunch — stops paying almost as soon as any real share of the board
+// is claimed. Not an absolute "never," though: very early, when almost nothing is owned yet,
+// there's no risk to wait out, so it still pays to keep moving.
+const JAIL_DANGER_THRESHOLD = 0.75;
+// Building is a last resort here, not the plan — bids only a thin premium over face houseCost.
+const HOUSE_AUCTION_MULTIPLIER = 1.1;
 
 function isIncomeGroup(space: { group?: ColorGroup }): boolean {
   return space.group !== undefined && INCOME_GROUPS.has(space.group);
@@ -22,6 +37,32 @@ export interface RailroadBaronBotOptions {
 export function createRailroadBaronBot(options: RailroadBaronBotOptions = {}): Bot {
   const reserve = options.cashReserve ?? 300;
 
+  const chooseHouseToBuild = (state: GameState, playerId: string): number | null => {
+    const player = state.players.find((p) => p.id === playerId)!;
+    const buildableGroups = Object.entries(GROUP_MEMBERS).filter(
+      ([group]) => group !== "railroad" && group !== "utility",
+    );
+
+    let bestChoice: { index: number; houses: number } | null = null;
+    for (const [, indices] of buildableGroups) {
+      const ownsAll = indices.every((i) => state.ownership[i].ownerId === playerId);
+      if (!ownsAll) continue;
+      if (indices.some((i) => state.ownership[i].mortgaged)) continue;
+      if (indices.some((i) => state.ownership[i].hotel)) continue;
+
+      for (const index of indices) {
+        const record = state.ownership[index];
+        const space = state.spaces[index] as PropertySpace;
+        // Building is a last resort here, not the plan — leave an extra-large cushion.
+        if (player.cash - space.houseCost < reserve * 1.5) continue;
+        if (bestChoice === null || record.houses < bestChoice.houses) {
+          bestChoice = { index, houses: record.houses };
+        }
+      }
+    }
+    return bestChoice ? bestChoice.index : null;
+  };
+
   return {
     name: "RailroadBaronBot",
 
@@ -32,35 +73,22 @@ export function createRailroadBaronBot(options: RailroadBaronBotOptions = {}): B
       return player.cash - space.price >= reserve;
     },
 
-    chooseHouseToBuild(state: GameState, playerId: string): number | null {
+    chooseHouseToBuild,
+
+    houseAuctionBid(state: GameState, playerId: string, currentBid: number): number | null {
       const player = state.players.find((p) => p.id === playerId)!;
-      const buildableGroups = Object.entries(GROUP_MEMBERS).filter(
-        ([group]) => group !== "railroad" && group !== "utility",
-      );
-
-      let bestChoice: { index: number; houses: number } | null = null;
-      for (const [, indices] of buildableGroups) {
-        const ownsAll = indices.every((i) => state.ownership[i].ownerId === playerId);
-        if (!ownsAll) continue;
-        if (indices.some((i) => state.ownership[i].mortgaged)) continue;
-        if (indices.some((i) => state.ownership[i].hotel)) continue;
-
-        for (const index of indices) {
-          const record = state.ownership[index];
-          const space = state.spaces[index] as PropertySpace;
-          // Building is a last resort here, not the plan — leave an extra-large cushion.
-          if (player.cash - space.houseCost < reserve * 1.5) continue;
-          if (bestChoice === null || record.houses < bestChoice.houses) {
-            bestChoice = { index, houses: record.houses };
-          }
-        }
-      }
-      return bestChoice ? bestChoice.index : null;
+      const target = chooseHouseToBuild(state, playerId);
+      if (target === null) return null;
+      const ceiling = houseAuctionCeiling(state, target, HOUSE_AUCTION_MULTIPLIER);
+      const nextBid = currentBid + 10;
+      if (nextBid > ceiling || nextBid > player.cash) return null;
+      return nextBid;
     },
 
-    shouldPayToLeaveJail(_state: GameState, _playerId: string): boolean {
+    shouldPayToLeaveJail(state: GameState, playerId: string): boolean {
       // Jail is a free, safe place to wait out risk from opponents' monopolies.
-      return false;
+      const player = state.players.find((p) => p.id === playerId)!;
+      return player.cash - 50 >= reserve && percentPropertiesUnowned(state) >= JAIL_DANGER_THRESHOLD;
     },
 
     raiseCash(state: GameState, playerId: string, _amountNeeded: number): number | null {
@@ -91,10 +119,29 @@ export function createRailroadBaronBot(options: RailroadBaronBotOptions = {}): B
     },
 
     proposeTrade(state: GameState, playerId: string): TradeOffer | null {
-      const player = state.players.find((p) => p.id === playerId)!;
       const target = findIncomeTarget(state, playerId);
       if (!target) return null;
 
+      // A straight swap needs no cash — offer a color property it holds in exchange for the
+      // railroad/utility piece, if the counterparty happens to be missing one. This bot never
+      // targets color monopolies itself, so there's no risk of the swap costing it an income
+      // property (findMutualMonopolyTargets only ever returns color-group properties).
+      const swapIndex = findMutualMonopolyTargets(state, playerId, target.ownerId, target.spaceIndex)[0];
+      if (swapIndex !== undefined) {
+        return {
+          fromPlayerId: playerId,
+          toPlayerId: target.ownerId,
+          offeredProperties: [swapIndex],
+          offeredCash: 0,
+          offeredGetOutOfJailFreeCards: 0,
+          requestedProperties: [target.spaceIndex],
+          requestedCash: 0,
+          requestedGetOutOfJailFreeCards: 0,
+          conditions: [],
+        };
+      }
+
+      const player = state.players.find((p) => p.id === playerId)!;
       const space = state.spaces[target.spaceIndex] as Ownable;
       // Matches its auction ceiling for railroads/utilities.
       const cashOffer = Math.round(space.price * 1.3);
@@ -120,12 +167,21 @@ export function createRailroadBaronBot(options: RailroadBaronBotOptions = {}): B
       const givingUpIncome = offer.requestedProperties.some((i) => isIncomeGroup(state.spaces[i] as { group?: ColorGroup }));
       if (givingUpIncome) return false;
 
-      const gaining = offer.offeredCash + propertyValue(state, offer.offeredProperties);
-      const giving = offer.requestedCash + propertyValue(state, offer.requestedProperties);
+      // No monopoly-completion premium on the giving side here — color monopolies were never the
+      // plan, so it lets color properties go at face value rather than holding out for value it
+      // was never going to realize itself. Its only real defense is the income-group refusal above.
+      const gainsMonopoly = offer.offeredProperties.some((i) => completesMonopolyFor(state, playerId, i, offer.fromPlayerId));
+
+      const offeredPropsValue = propertyValue(state, offer.offeredProperties) * (gainsMonopoly ? MONOPOLY_COMPLETION_PREMIUM : 1);
+      const gaining = offer.offeredCash + offeredPropsValue;
+
       const protectedByCondition = offer.conditions.some((c) => c.protectedPlayerId === playerId);
-      const effectiveGiving = protectedByCondition ? giving * 0.7 : giving;
+      const requestedPropsValue = propertyValue(state, offer.requestedProperties);
+      const adjustedRequestedPropsValue = protectedByCondition ? requestedPropsValue * 0.7 : requestedPropsValue;
+      const giving = offer.requestedCash + adjustedRequestedPropsValue;
+
       const cashAfter = player.cash + offer.offeredCash - offer.requestedCash;
-      return gaining >= effectiveGiving && cashAfter >= reserve;
+      return gaining >= giving && cashAfter >= reserve;
     },
   };
 }

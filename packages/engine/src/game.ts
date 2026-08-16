@@ -15,6 +15,11 @@ const MAX_BUILD_ACTIONS_PER_TURN = 50;
 const MORTGAGE_INTEREST_RATE = 0.1;
 const MAX_FINANCE_ACTIONS_PER_TURN = 28; // one per ownable space, worst case
 const AUCTION_BID_INCREMENT = 10;
+// Below these remaining counts, a build attempt checks for other interested players before just
+// handing the piece to whoever's turn it is — the official rule for genuine house/hotel scarcity.
+// Small buffers reflecting "the scarce endgame zone," not the whole game.
+const HOUSE_SCARCITY_THRESHOLD = 4;
+const HOTEL_SCARCITY_THRESHOLD = 2;
 
 interface Deck {
   cards: Card[];
@@ -1075,7 +1080,7 @@ export class Game {
     for (let i = 0; i < MAX_BUILD_ACTIONS_PER_TURN; i++) {
       const choice = bot.chooseHouseToBuild(this.getSnapshot(), player.id);
       if (choice === null) return;
-      if (!this.tryBuild(player, choice)) return;
+      if (this.attemptBuild(player, choice) === "stop") return;
     }
   }
 
@@ -1084,37 +1089,152 @@ export class Game {
     return record.hotel ? 5 : record.houses;
   }
 
-  private tryBuild(player: PlayerState, spaceIndex: number): boolean {
+  /** Which piece would be added at spaceIndex for player, ignoring cash/supply — null if the
+   * build itself isn't legal right now (not their monopoly, mortgaged sibling, already a hotel,
+   * or blocked by even-building). Split out from tryBuild so the house-scarcity auction can run
+   * the same legality checks without needing to actually place anything. */
+  private buildKind(player: PlayerState, spaceIndex: number): "house" | "hotel" | null {
     const space = BOARD[spaceIndex];
-    if (space.type !== "property") return false;
+    if (space.type !== "property") return null;
     const record = this.state.ownership[spaceIndex];
-    if (record.ownerId !== player.id || record.mortgaged) return false;
+    if (record.ownerId !== player.id || record.mortgaged) return null;
     const groupIndices = GROUP_MEMBERS[space.group];
     const hasMonopoly = groupIndices.every((i) => this.state.ownership[i].ownerId === player.id);
-    if (!hasMonopoly || record.hotel) return false;
+    if (!hasMonopoly || record.hotel) return null;
     // A monopoly must be fully active to build on — any mortgaged sibling blocks the whole group.
-    if (groupIndices.some((i) => this.state.ownership[i].mortgaged)) return false;
+    if (groupIndices.some((i) => this.state.ownership[i].mortgaged)) return null;
     // Even-building: only the least-developed propert(y/ies) in the group may be built on. This
     // also gives the "hotel requires every property at 4 houses" rule for free — a property at 4
     // only qualifies once every sibling has caught up to the shared minimum of 4.
     const minLevel = Math.min(...groupIndices.map((i) => this.improvementLevel(this.state.ownership[i])));
-    if (this.improvementLevel(record) > minLevel) return false;
+    if (this.improvementLevel(record) > minLevel) return null;
+    return record.houses < 4 ? "house" : "hotel";
+  }
 
-    if (record.houses < 4) {
-      if (this.state.housesRemaining <= 0 || player.cash < space.houseCost) return false;
+  /** Places a house/hotel at spaceIndex for player at `price` — normally space.houseCost, but the
+   * house-scarcity auction can override it with the winning bid. Assumes the caller already
+   * confirmed legality (buildKind) and cash/supply. `log` is false from the auction path, which
+   * already announces the win itself — matching runAuction's own single-line-per-win convention
+   * rather than a redundant "wins the auction" + "builds a house" pair. */
+  private placeBuild(player: PlayerState, spaceIndex: number, kind: "house" | "hotel", price: number, log = true) {
+    const space = BOARD[spaceIndex] as PropertySpace;
+    const record = this.state.ownership[spaceIndex];
+    player.cash -= price;
+    if (kind === "house") {
       record.houses += 1;
       this.state.housesRemaining -= 1;
-      player.cash -= space.houseCost;
-      this.logEvent(`${player.name} builds a house on ${space.name} (${record.houses}/4).`, "BUILD");
-      return true;
+      if (log) this.logEvent(`${player.name} builds a house on ${space.name} (${record.houses}/4).`, "BUILD");
+    } else {
+      record.houses = 0;
+      record.hotel = true;
+      this.state.housesRemaining += 4;
+      this.state.hotelsRemaining -= 1;
+      if (log) this.logEvent(`${player.name} builds a hotel on ${space.name}.`, "BUILD");
     }
-    if (this.state.hotelsRemaining <= 0 || player.cash < space.houseCost) return false;
-    record.houses = 0;
-    record.hotel = true;
-    this.state.housesRemaining += 4;
-    this.state.hotelsRemaining -= 1;
-    player.cash -= space.houseCost;
-    this.logEvent(`${player.name} builds a hotel on ${space.name}.`, "BUILD");
+  }
+
+  private tryBuild(player: PlayerState, spaceIndex: number): boolean {
+    const kind = this.buildKind(player, spaceIndex);
+    if (kind === null) return false;
+    const space = BOARD[spaceIndex] as PropertySpace;
+    if (player.cash < space.houseCost) return false;
+    if (kind === "house" && this.state.housesRemaining <= 0) return false;
+    if (kind === "hotel" && this.state.hotelsRemaining <= 0) return false;
+    this.placeBuild(player, spaceIndex, kind, space.houseCost);
     return true;
+  }
+
+  /**
+   * Attempts to build at spaceIndex for player — a normal build at face houseCost if supply isn't
+   * contested, or a scarcity auction (the official rule: when the bank's house/hotel supply is
+   * running low and more than one player currently wants a piece, it goes to the highest bidder,
+   * not to whoever's turn happens to come first) when it is. Returns "stop" when this player's
+   * build-phase loop for the turn should end (nothing built this attempt, or the scarce piece went
+   * to someone else), "continue" when it's worth calling chooseHouseToBuild again this turn.
+   */
+  private attemptBuild(player: PlayerState, spaceIndex: number): "continue" | "stop" {
+    const kind = this.buildKind(player, spaceIndex);
+    if (kind === null) return "stop";
+    const space = BOARD[spaceIndex] as PropertySpace;
+    if (player.cash < space.houseCost) return "stop";
+
+    const remaining = kind === "house" ? this.state.housesRemaining : this.state.hotelsRemaining;
+    if (remaining <= 0) return "stop"; // truly nothing left to build or auction
+
+    const scarcityThreshold = kind === "house" ? HOUSE_SCARCITY_THRESHOLD : HOTEL_SCARCITY_THRESHOLD;
+    if (remaining <= scarcityThreshold) {
+      const contenders = this.findScarcityContenders(player.id, kind);
+      if (contenders.length > 0) {
+        const won = this.runHouseScarcityAuction(player.id, contenders, kind);
+        return won ? "continue" : "stop";
+      }
+    }
+
+    this.placeBuild(player, spaceIndex, kind, space.houseCost);
+    return "continue";
+  }
+
+  /** Every other active player who, right now, would build the same kind (house/hotel) as
+   * `currentPlayerId` if asked — found by calling their own chooseHouseToBuild (which doesn't
+   * itself check supply) and re-validating with buildKind/cash. This is the "more than one player
+   * currently wants it" condition the real scarcity-auction rule requires. */
+  private findScarcityContenders(currentPlayerId: string, kind: "house" | "hotel"): string[] {
+    const contenders: string[] = [];
+    for (const p of this.activePlayers()) {
+      if (p.id === currentPlayerId) continue;
+      const bot = this.bots.get(p.id)!;
+      const target = bot.chooseHouseToBuild(this.getSnapshot(), p.id);
+      if (target === null) continue;
+      if (this.buildKind(p, target) !== kind) continue;
+      const space = BOARD[target] as PropertySpace;
+      if (p.cash < space.houseCost) continue;
+      contenders.push(p.id);
+    }
+    return contenders;
+  }
+
+  /** Runs the scarcity auction among currentPlayerId and contenders (same round-robin bidding
+   * pattern as runAuction) and, if anyone actually bids, builds the winner's own chosen target at
+   * their winning price. Returns whether currentPlayerId themselves won it. */
+  private runHouseScarcityAuction(currentPlayerId: string, contenders: string[], kind: "house" | "hotel"): boolean {
+    const bidders = [currentPlayerId, ...contenders];
+    let currentBid = 0;
+    let highBidderId: string | null = null;
+    const passed = new Set<string>();
+    const maxTurns = bidders.length * 10;
+
+    for (let turn = 0, i = 0; turn < maxTurns; turn++, i++) {
+      const remaining = bidders.filter((id) => !passed.has(id));
+      if (remaining.length === 0) break;
+      if (remaining.length === 1 && highBidderId !== null) break;
+
+      const playerId = bidders[i % bidders.length];
+      if (passed.has(playerId)) continue;
+
+      const player = this.state.players.find((p) => p.id === playerId)!;
+      const bot = this.bots.get(playerId)!;
+      const nextMinBid = currentBid + AUCTION_BID_INCREMENT;
+      const bid = bot.houseAuctionBid(this.getSnapshot(), playerId, currentBid, highBidderId);
+      if (bid !== null && bid >= nextMinBid && bid <= player.cash) {
+        currentBid = bid;
+        highBidderId = playerId;
+      } else {
+        passed.add(playerId);
+      }
+    }
+
+    if (highBidderId === null) return false; // nobody actually bid; nothing built this attempt
+
+    const winner = this.state.players.find((p) => p.id === highBidderId)!;
+    const winnerBot = this.bots.get(highBidderId)!;
+    const target = winnerBot.chooseHouseToBuild(this.getSnapshot(), highBidderId);
+    // Legality was already confirmed when winner was found to be a contender (or is currentPlayerId,
+    // already confirmed by the caller) — state hasn't changed since, so this can't come back null.
+    if (target === null || this.buildKind(winner, target) !== kind) return false;
+    const space = BOARD[target] as PropertySpace;
+    const tally = kind === "house" ? ` (${this.state.ownership[target].houses + 1}/4)` : "";
+    this.logEvent(`${winner.name} wins the ${kind} auction for ${space.name} at $${currentBid}${tally}.`, "BUILD");
+    this.placeBuild(winner, target, kind, currentBid, false);
+    return highBidderId === currentPlayerId;
   }
 }

@@ -75,6 +75,19 @@ export function createNeatBot(genome?: Genome, options: NeatBotOptions = {}): Bo
   const actionThreshold = -aggressiveness * AGGRESSION_THRESHOLD_SCALE;
   const reserveMultiplier = Math.max(0, 1 - aggressiveness * AGGRESSION_RESERVE_SCALE);
 
+  const chooseHouseToBuild = (state: GameState, playerId: string): number | null => {
+    const player = state.players.find((p) => p.id === playerId)!;
+    const reserve = Math.max(BASE_BUILD_RESERVE, maxOpponentRentThreat(state, playerId) * THREAT_RESERVE_MULTIPLIER) * reserveMultiplier;
+    let best: { index: number; score: number } | null = null;
+    for (const index of buildableCandidates(state, playerId)) {
+      const cost = (state.spaces[index] as PropertySpace).houseCost;
+      if (player.cash - cost < reserve) continue; // stay solvent; otherwise keep building
+      const score = scoreProperty(activeGenome, state, playerId, index);
+      if (best === null || score > best.score) best = { index, score };
+    }
+    return best ? best.index : null;
+  };
+
   return {
     name: "NeatBot",
 
@@ -89,17 +102,18 @@ export function createNeatBot(genome?: Genome, options: NeatBotOptions = {}): Bo
       return scoreProperty(activeGenome, state, playerId, spaceIndex, nextBid) > actionThreshold ? nextBid : null;
     },
 
-    chooseHouseToBuild(state: GameState, playerId: string): number | null {
+    chooseHouseToBuild,
+
+    // Reuses the same evolved property score that drives buy/bid/build — a house-scarcity bid is
+    // just "how much is finishing this build worth to me," the same question scoreProperty already
+    // answers, so no separate output head is needed for it.
+    houseAuctionBid(state: GameState, playerId: string, currentBid: number): number | null {
       const player = state.players.find((p) => p.id === playerId)!;
-      const reserve = Math.max(BASE_BUILD_RESERVE, maxOpponentRentThreat(state, playerId) * THREAT_RESERVE_MULTIPLIER) * reserveMultiplier;
-      let best: { index: number; score: number } | null = null;
-      for (const index of buildableCandidates(state, playerId)) {
-        const cost = (state.spaces[index] as PropertySpace).houseCost;
-        if (player.cash - cost < reserve) continue; // stay solvent; otherwise keep building
-        const score = scoreProperty(activeGenome, state, playerId, index);
-        if (best === null || score > best.score) best = { index, score };
-      }
-      return best ? best.index : null;
+      const target = chooseHouseToBuild(state, playerId);
+      if (target === null) return null;
+      const nextBid = currentBid + AUCTION_BID_INCREMENT;
+      if (nextBid > player.cash) return null;
+      return scoreProperty(activeGenome, state, playerId, target) > actionThreshold ? nextBid : null;
     },
 
     shouldPayToLeaveJail(state: GameState, playerId: string): boolean {

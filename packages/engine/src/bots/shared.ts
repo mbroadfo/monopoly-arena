@@ -1,5 +1,5 @@
 import { GROUP_MEMBERS } from "../board.js";
-import type { GameState, Ownable } from "../types.js";
+import type { GameState, Ownable, PropertySpace } from "../types.js";
 
 /** Mortgage value is half face price; unmortgaging costs that plus 10% interest. */
 export function unmortgageCost(state: GameState, spaceIndex: number): number {
@@ -117,4 +117,77 @@ export function findMonopolyCompletionTargets(state: GameState, playerId: string
     results.push({ spaceIndex: missing, ownerId: missingRecord.ownerId });
   }
   return results;
+}
+
+/**
+ * Fraction of the board's ownable spaces (properties, railroads, utilities) still unowned, in
+ * [0, 1] — 1.0 at the very start of the game, falling as players buy in. A simple, board-wide
+ * proxy for "how dangerous is an unlucky landing right now": early on almost nothing is claimed,
+ * so there's little to fear; once most of the board is owned and developed, staying put avoids
+ * real money exposure. Used to graduate `shouldPayToLeaveJail` from "always pay" toward "wait it
+ * out" as the game gets more dangerous, instead of one fixed rule for the whole game.
+ */
+export function percentPropertiesUnowned(state: GameState): number {
+  const records = Object.values(state.ownership);
+  return records.filter((r) => r.ownerId === null).length / records.length;
+}
+
+/** Matches the ~1.5x-of-price premium Naive/OrangeRush/RailroadBaron already pay as a *buyer* for
+ * a monopoly-completing piece — reused as the minimum a bot should demand before *selling* one, so
+ * a bot doesn't undervalue on the sell side the exact thing its own buy side already prices at a
+ * premium. */
+export const MONOPOLY_COMPLETION_PREMIUM = 1.5;
+
+/**
+ * True if handing `spaceIndex` (currently owned by `currentOwnerId`) to `wouldGainId` completes
+ * one of their color-group monopolies — i.e. this isn't just any property, it's the missing piece.
+ * Reuses `findMonopolyCompletionTargets` (the same "who's missing exactly one piece" scan
+ * `proposeTrade` already runs for its own offers) so accept-side defense and propose-side offers
+ * agree on what counts as a monopoly-completing property.
+ */
+export function completesMonopolyFor(state: GameState, wouldGainId: string, spaceIndex: number, currentOwnerId: string): boolean {
+  return findMonopolyCompletionTargets(state, wouldGainId).some((t) => t.spaceIndex === spaceIndex && t.ownerId === currentOwnerId);
+}
+
+/**
+ * Color-group properties `playerId` owns that would complete one of `counterpartyId`'s own
+ * "missing exactly one piece" groups — the reverse-direction lookup from
+ * `findMonopolyCompletionTargets`, used to find a straight property-for-property swap that
+ * completes a monopoly for *both* sides at once, no cash needed. Mirrors the "mutual monopoly"
+ * check `neat/trade.ts`'s candidate generator already runs for NEAT's own offers, so the fixed
+ * bots can propose the same kind of deal.
+ *
+ * `requestedSpaceIndex` (the property `playerId` is asking for) is excluded from its own group:
+ * for the one 2-property color group (brown), each side owning one piece always makes both
+ * players simultaneously "missing exactly one" of that *same* group — without this exclusion,
+ * `playerId` would end up "offering" the very group-mate of the piece they're requesting, a
+ * self-cancelling swap that trades away their own progress instead of completing it.
+ */
+export function findMutualMonopolyTargets(
+  state: GameState,
+  playerId: string,
+  counterpartyId: string,
+  requestedSpaceIndex: number,
+): number[] {
+  const requestedGroup = (state.spaces[requestedSpaceIndex] as Ownable).group;
+  return findMonopolyCompletionTargets(state, counterpartyId)
+    .filter((t) => t.ownerId === playerId && (state.spaces[t.spaceIndex] as Ownable).group !== requestedGroup)
+    .map((t) => t.spaceIndex);
+}
+
+/**
+ * How much a bot should be willing to bid for a scarce house/hotel piece at `spaceIndex`, given
+ * how eager it is (`multiplier`, a plain scale on face `houseCost`) — scaled further by how close
+ * that property already is to a hotel: 1x face value at 0 houses, up to 2x at 3 houses (bidding
+ * for the 4th). Real Monopoly's house-shortage auction has no such rule, but rewarding urgency
+ * this way is what makes an auction actually help: a bid that favors finishing a hotel over
+ * starting a new group concentrates the scarce supply instead of spreading it thin, which is what
+ * lets hotel conversions (each returns 4 houses to the bank) keep the game moving instead of
+ * freezing once the 32-house pool runs dry.
+ */
+export function houseAuctionCeiling(state: GameState, spaceIndex: number, multiplier: number): number {
+  const space = state.spaces[spaceIndex] as PropertySpace;
+  const record = state.ownership[spaceIndex];
+  const closeness = 1 + record.houses / 4;
+  return Math.round(space.houseCost * multiplier * closeness);
 }

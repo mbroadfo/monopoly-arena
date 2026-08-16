@@ -43,12 +43,14 @@ describe("Game", () => {
       ...passivePassthrough,
       shouldBuyProperty: () => false,
       auctionBid: (_state, _playerId, _spaceIndex, currentBid) => (currentBid === 0 ? 10 : null),
+      houseAuctionBid: () => null,
     };
     const bidder: Bot = {
       name: "Bidder",
       ...passivePassthrough,
       shouldBuyProperty: () => false,
       auctionBid: (_state, _playerId, _spaceIndex, currentBid) => currentBid + 20,
+      houseAuctionBid: () => null,
     };
 
     const game = new Game({ playerNames: ["A", "B"], bots: [decliner, bidder], rng: mulberry32(7) });
@@ -76,6 +78,7 @@ describe("Game", () => {
       proposeTrade: () => null,
       evaluateTrade: () => false,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
     };
     const game = new Game({ playerNames: ["A", "B"], bots: [passive, { ...passive, name: "B" }], rng: mulberry32(7) });
 
@@ -99,6 +102,7 @@ describe("Game", () => {
       raiseCash: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       shouldBuyProperty: () => false,
     };
 
@@ -174,6 +178,7 @@ describe("Game", () => {
       raiseCash: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       shouldBuyProperty: () => false,
     };
 
@@ -247,6 +252,7 @@ describe("Game", () => {
       raiseCash: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
       // Always tries to build on New York Ave, which already has more houses than its siblings.
@@ -265,6 +271,88 @@ describe("Game", () => {
     expect(game.state.ownership[18].houses).toBe(0);
   });
 
+  describe("house/hotel scarcity auction", () => {
+    const ORANGE = [16, 18, 19]; // St. James, Tennessee, New York
+    const LIGHTBLUE = [6, 8, 9]; // Oriental, Vermont, Connecticut
+
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+
+    it("awards a scarce house to the highest bidder, not necessarily the current player", () => {
+      const cheapBidder: Bot = {
+        name: "CheapBidder",
+        ...passthrough,
+        chooseHouseToBuild: () => 16,
+        houseAuctionBid: (_state, _playerId, currentBid) => (currentBid < 50 ? currentBid + 10 : null),
+      };
+      const richBidder: Bot = {
+        name: "RichBidder",
+        ...passthrough,
+        chooseHouseToBuild: () => 6,
+        houseAuctionBid: (_state, _playerId, currentBid) => currentBid + 10, // always outbids
+      };
+
+      const game = new Game({ playerNames: ["CheapBidder", "RichBidder"], bots: [cheapBidder, richBidder], rng: mulberry32(1) });
+      game.state.currentPlayerIndex = 0; // CheapBidder's turn
+      for (const i of ORANGE) game.state.ownership[i].ownerId = "p0";
+      for (const i of LIGHTBLUE) game.state.ownership[i].ownerId = "p1";
+      game.state.housesRemaining = 4; // at the scarcity threshold
+      game.state.players[0].cash = 5000;
+      game.state.players[1].cash = 5000;
+
+      game.playTurn(); // CheapBidder's turn, but RichBidder also wants a house right now
+
+      expect(game.state.ownership[16].houses).toBe(0); // CheapBidder's own target lost the auction
+      expect(game.state.ownership[6].houses).toBe(1); // RichBidder's target won it instead
+      expect(game.state.housesRemaining).toBe(3);
+      expect(game.state.log.some((l) => l.includes("RichBidder wins the house auction for Oriental Avenue"))).toBe(true);
+    });
+
+    it("builds normally at face houseCost when nobody else currently wants a house", () => {
+      const builder: Bot = { name: "Builder", ...passthrough, chooseHouseToBuild: () => 16, houseAuctionBid: () => null };
+      const dummy: Bot = { name: "Dummy", ...passthrough, chooseHouseToBuild: () => null, houseAuctionBid: () => null };
+
+      const game = new Game({ playerNames: ["Builder", "Dummy"], bots: [builder, dummy], rng: mulberry32(1) });
+      game.state.currentPlayerIndex = 0;
+      for (const i of ORANGE) game.state.ownership[i].ownerId = "p0";
+      game.state.housesRemaining = 4; // scarce, but nobody else is contending for it
+      game.state.players[0].cash = 5000;
+
+      game.playTurn();
+
+      expect(game.state.ownership[16].houses).toBe(1); // built normally, no auction needed
+      expect(game.state.housesRemaining).toBe(3);
+      expect(game.state.players[0].cash).toBe(4900); // face houseCost ($100), not a bid
+    });
+
+    it("builds nothing when the scarce piece is contested but nobody actually bids", () => {
+      const passer: Bot = { name: "Passer", ...passthrough, chooseHouseToBuild: () => 16, houseAuctionBid: () => null };
+      const otherPasser: Bot = { name: "OtherPasser", ...passthrough, chooseHouseToBuild: () => 6, houseAuctionBid: () => null };
+
+      const game = new Game({ playerNames: ["Passer", "OtherPasser"], bots: [passer, otherPasser], rng: mulberry32(1) });
+      game.state.currentPlayerIndex = 0;
+      for (const i of ORANGE) game.state.ownership[i].ownerId = "p0";
+      for (const i of LIGHTBLUE) game.state.ownership[i].ownerId = "p1";
+      game.state.housesRemaining = 4;
+      game.state.players[0].cash = 5000;
+      game.state.players[1].cash = 5000;
+      const housesRemainingBefore = game.state.housesRemaining;
+
+      game.playTurn();
+
+      expect(game.state.ownership[16].houses).toBe(0);
+      expect(game.state.ownership[6].houses).toBe(0);
+      expect(game.state.housesRemaining).toBe(housesRemainingBefore);
+    });
+  });
+
   it("sells houses back respecting the reverse (most-developed-first) rule", () => {
     const ORANGE = [16, 18, 19];
     const passthrough = {
@@ -273,6 +361,7 @@ describe("Game", () => {
       raiseCash: () => null,
       chooseHouseToBuild: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -341,6 +430,7 @@ describe("Game", () => {
       chooseHouseToBuild: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -379,6 +469,7 @@ describe("Game", () => {
       chooseHouseToBuild: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -409,6 +500,7 @@ describe("Game", () => {
       chooseHouseToBuild: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -444,6 +536,7 @@ describe("Game", () => {
       chooseHouseToBuild: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -476,6 +569,7 @@ describe("Game", () => {
       raiseCash: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -532,6 +626,7 @@ describe("Game", () => {
       chooseHouseToBuild: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -572,6 +667,7 @@ describe("Game", () => {
       chooseHouseToBuild: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -625,6 +721,7 @@ describe("Game", () => {
       chooseHouseToBuild: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -672,6 +769,7 @@ describe("Game", () => {
       chooseHouseToBuild: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
     };
     const holder: Bot = {
       name: "Holder",
@@ -747,6 +845,7 @@ describe("Game", () => {
       chooseHouseToBuild: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -791,6 +890,7 @@ describe("Game", () => {
       chooseHouseToBuild: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -821,6 +921,7 @@ describe("Game", () => {
       chooseHouseToBuild: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -852,6 +953,7 @@ describe("Game", () => {
       chooseHouseToBuild: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -880,6 +982,7 @@ describe("Game", () => {
       chooseHouseToBuild: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       proposeTrade: () => null,
       evaluateTrade: () => false,
     };
@@ -909,6 +1012,7 @@ describe("Game", () => {
       raiseCash: () => null,
       chooseFinanceAction: () => null,
       auctionBid: () => null,
+      houseAuctionBid: () => null,
       shouldBuyProperty: () => false,
     };
     let sellerAccepts = false;

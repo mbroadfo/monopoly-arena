@@ -87,6 +87,16 @@ export class Game {
   private chanceDeck: Deck;
   private communityChestDeck: Deck;
   private goojfHeld: GoojfHolder = { chance: null, communityChest: null };
+  // "Round" (every active player gets one turn) is a purely log-formatting concept, distinct from
+  // state.turn (one *player's* whole turn, incrementing per playTurn() call — used throughout
+  // encoding/UI as a game-length signal, so it keeps its existing meaning unchanged). Tracked by
+  // watching for the acting player's seat index wrapping back to <= the last one seen: robust to
+  // bankruptcies removing higher-indexed seats from rotation, unlike waiting for a fixed "seat 0"
+  // that a bankrupt starting player might never occupy again. Starts at +Infinity, not -1 — any
+  // real (finite, >=0) seat index must satisfy "<= last seen" on the very first turn too, so round
+  // 1 actually gets its header instead of being silently skipped.
+  private roundNumber = 0;
+  private lastRoundSeatIndex = Number.POSITIVE_INFINITY;
 
   constructor(options: GameOptions) {
     if (options.playerNames.length !== options.bots.length) {
@@ -203,6 +213,35 @@ export class Game {
     this.state.log.push(message);
   }
 
+  /** Anything that happens *within* a player's turn — roll, landing, rent, a card, a build, a
+   * trade, jail resolution — indented two spaces so a whole turn visually reads as one block
+   * nested under its `logTurnMarker` header, rather than a flat run of sequential lines
+   * indistinguishable from the turns before and after it. `tag` is one of the short category
+   * labels (ROLL/RENT/CARD/BUILD/MORTGAGE/TRADE/JAIL) for the subset of events that have one;
+   * plenty of legitimate turn events (buying a property, an auction, paying tax, going bankrupt)
+   * don't fit any of those seven and are deliberately left untagged rather than force-fit. */
+  private logEvent(message: string, tag?: string) {
+    this.log(tag ? `  [${tag}] ${message}` : `  ${message}`);
+  }
+
+  /** Logs a "Round N" header the moment the acting player's seat index wraps back around to at or
+   * below the last one seen — i.e. a fresh lap of the table has begun. Call once per `playTurn()`,
+   * before anything else gets logged for that turn. */
+  private maybeStartNewRound() {
+    if (this.state.currentPlayerIndex <= this.lastRoundSeatIndex) {
+      this.roundNumber++;
+      this.log(`Round ${this.roundNumber}`);
+    }
+    this.lastRoundSeatIndex = this.state.currentPlayerIndex;
+  }
+
+  /** "Round N · Player's turn" — the block header every turn's indented events (see `logEvent`)
+   * nest under. `suffix` distinguishes a bonus roll from rolling doubles from the turn's initial
+   * roll, without implying a whole new turn — the round number and player don't change either. */
+  private logTurnMarker(player: PlayerState, suffix = "") {
+    this.log(`Round ${this.roundNumber} · ${player.name}'s turn${suffix}`);
+  }
+
   private currentPlayer(): PlayerState {
     return this.state.players[this.state.currentPlayerIndex];
   }
@@ -235,6 +274,9 @@ export class Game {
     this.state.doublesStreak = 0;
     this.state.moves = [];
 
+    this.maybeStartNewRound();
+    this.logTurnMarker(player);
+
     let shouldRollNormally = true;
     if (player.inJail) {
       shouldRollNormally = this.handleJailTurn(player);
@@ -242,7 +284,12 @@ export class Game {
     }
 
     let keepRolling = shouldRollNormally;
+    let firstRoll = true;
     while (keepRolling && !player.bankrupt) {
+      // The turn marker above already covers this turn's first roll — only a bonus roll chained
+      // from doubles gets its own follow-up marker, distinguishing it from a brand new turn.
+      if (!firstRoll) this.logTurnMarker(player, " (bonus roll — doubles)");
+      firstRoll = false;
       keepRolling = this.rollAndMove(player);
       if (this.isGameOver()) return;
     }
@@ -268,22 +315,22 @@ export class Game {
       this.releaseGoojfCard(player.id);
       player.inJail = false;
       player.jailTurns = 0;
-      this.log(`${player.name} uses a Get Out of Jail Free card.`);
+      this.logEvent(`${player.name} uses a Get Out of Jail Free card.`, "JAIL");
       return true;
     }
     if (bot.shouldPayToLeaveJail(this.getSnapshot(), player.id) && player.cash >= JAIL_FINE) {
       player.cash -= JAIL_FINE;
       player.inJail = false;
       player.jailTurns = 0;
-      this.log(`${player.name} pays $${JAIL_FINE} to leave jail.`);
+      this.logEvent(`${player.name} pays $${JAIL_FINE} to leave jail.`, "JAIL");
       return true;
     }
     const roll = rollDice(this.rng);
-    this.log(`${player.name} (in jail) rolls ${roll.d1}+${roll.d2}.`);
+    this.logEvent(`${player.name} (in jail) rolls ${roll.d1}+${roll.d2}.`, "JAIL");
     if (roll.isDouble) {
       player.inJail = false;
       player.jailTurns = 0;
-      this.log(`${player.name} rolls doubles and leaves jail.`);
+      this.logEvent(`${player.name} rolls doubles and leaves jail.`, "JAIL");
       const move = this.movePlayer(player, roll.total);
       this.resolveSpace(player);
       move.ownershipAfter = structuredClone(this.state.ownership);
@@ -299,25 +346,25 @@ export class Game {
       }
       player.inJail = false;
       player.jailTurns = 0;
-      this.log(`${player.name} has served max jail time and pays $${JAIL_FINE}.`);
+      this.logEvent(`${player.name} has served max jail time and pays $${JAIL_FINE}.`, "JAIL");
       const move = this.movePlayer(player, roll.total);
       this.resolveSpace(player);
       move.ownershipAfter = structuredClone(this.state.ownership);
       return false;
     }
-    this.log(`${player.name} stays in jail (turn ${player.jailTurns}/${MAX_JAIL_TURNS}).`);
+    this.logEvent(`${player.name} stays in jail (turn ${player.jailTurns}/${MAX_JAIL_TURNS}).`, "JAIL");
     return false;
   }
 
   /** Rolls, moves, and resolves the landing space. Returns true if the player rolled doubles and should go again. */
   private rollAndMove(player: PlayerState): boolean {
     const roll = rollDice(this.rng);
-    this.log(`${player.name} rolls ${roll.d1}+${roll.d2} (${roll.total}).`);
+    this.logEvent(`${player.name} rolls ${roll.d1}+${roll.d2} (${roll.total}).`, "ROLL");
 
     if (roll.isDouble) {
       this.state.doublesStreak += 1;
       if (this.state.doublesStreak === 3) {
-        this.log(`${player.name} rolled doubles three times in a row and goes to jail.`);
+        this.logEvent(`${player.name} rolled doubles three times in a row and goes to jail.`, "JAIL");
         this.sendToJail(player);
         return false;
       }
@@ -341,7 +388,7 @@ export class Game {
     player.position = (player.position + spaces) % 40;
     if (player.position < before) {
       player.cash += GO_SALARY;
-      this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
+      this.logEvent(`${player.name} passes GO and collects $${GO_SALARY}.`);
     }
     const move: MoveEvent = {
       playerId: player.id,
@@ -388,7 +435,7 @@ export class Game {
 
   private resolveSpace(player: PlayerState, rentOverride?: RentOverride) {
     const space = BOARD[player.position];
-    this.log(`${player.name} lands on ${space.name}.`);
+    this.logEvent(`${player.name} lands on ${space.name}.`);
 
     switch (space.type) {
       case "go":
@@ -396,7 +443,7 @@ export class Game {
       case "free-parking":
         return;
       case "go-to-jail":
-        this.log(`${player.name} is sent to jail.`);
+        this.logEvent(`${player.name} is sent to jail.`, "JAIL");
         this.sendToJail(player);
         return;
       case "tax":
@@ -425,10 +472,10 @@ export class Game {
       if (player.cash >= price && bot.shouldBuyProperty(this.getSnapshot(), player.id, spaceIndex)) {
         player.cash -= price;
         record.ownerId = player.id;
-        this.log(`${player.name} buys ${space.name} for $${price}.`);
+        this.logEvent(`${player.name} buys ${space.name} for $${price}.`);
         this.checkMonopolyFormed(player, space.group);
       } else {
-        this.log(`${player.name} declines to buy ${space.name}. It goes to auction.`);
+        this.logEvent(`${player.name} declines to buy ${space.name}. It goes to auction.`);
         this.runAuction(spaceIndex);
       }
       return;
@@ -441,7 +488,7 @@ export class Game {
       // calculateRent already logged the waiving trade condition that caused this.
       return;
     }
-    this.log(`${player.name} owes ${owner.name} $${rent} rent for ${space.name}.`);
+    this.logEvent(`${player.name} owes ${owner.name} $${rent} rent for ${space.name}.`, "RENT");
     this.payPlayer(player, owner, rent);
   }
 
@@ -480,10 +527,10 @@ export class Game {
       const winner = this.state.players.find((p) => p.id === highBidderId)!;
       winner.cash -= currentBid;
       this.state.ownership[spaceIndex].ownerId = winner.id;
-      this.log(`${winner.name} wins the auction for ${space.name} at $${currentBid}.`);
+      this.logEvent(`${winner.name} wins the auction for ${space.name} at $${currentBid}.`);
       this.checkMonopolyFormed(winner, space.group);
     } else {
-      this.log(`No bids for ${space.name}; it remains unowned.`);
+      this.logEvent(`No bids for ${space.name}; it remains unowned.`);
     }
   }
 
@@ -532,16 +579,17 @@ export class Game {
     if (condition?.kind === "waive" && (condition.usesRemaining ?? 0) > 0) {
       condition.usesRemaining! -= 1;
       const remaining = condition.usesRemaining!;
-      this.log(
+      this.logEvent(
         `Trade condition applies: ${payer.name} owes no rent on ${space.name}` +
           (remaining > 0 ? ` (${remaining} use${remaining === 1 ? "" : "s"} left).` : " (condition now used up)."),
+        "TRADE",
       );
       return 0;
     }
     if (condition?.kind === "cap" && condition.capLevel !== undefined) {
       const capped = Math.min(rent, space.rent[condition.capLevel]);
       if (capped < rent) {
-        this.log(`Trade condition applies: ${payer.name}'s rent on ${space.name} is capped at $${capped} (would have been $${rent}).`);
+        this.logEvent(`Trade condition applies: ${payer.name}'s rent on ${space.name} is capped at $${capped} (would have been $${rent}).`, "TRADE");
       }
       return capped;
     }
@@ -588,7 +636,7 @@ export class Game {
   }
 
   private applyCard(player: PlayerState, card: Card) {
-    this.log(`${player.name} draws: "${card.text}"`);
+    this.logEvent(`${player.name} draws: "${card.text}"`, "CARD");
     const effect = card.effect;
     switch (effect.kind) {
       case "advance-to": {
@@ -596,7 +644,7 @@ export class Game {
         player.position = effect.spaceIndex;
         if (player.position < before || effect.spaceIndex === 0) {
           player.cash += GO_SALARY;
-          this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
+          this.logEvent(`${player.name} passes GO and collects $${GO_SALARY}.`);
         }
         const move: MoveEvent = {
           playerId: player.id,
@@ -622,7 +670,7 @@ export class Game {
         player.position = this.nearestSpaceOfType(before, "railroad");
         if (player.position < before) {
           player.cash += GO_SALARY;
-          this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
+          this.logEvent(`${player.name} passes GO and collects $${GO_SALARY}.`);
         }
         const move: MoveEvent = {
           playerId: player.id,
@@ -642,7 +690,7 @@ export class Game {
         player.position = this.nearestSpaceOfType(before, "utility");
         if (player.position < before) {
           player.cash += GO_SALARY;
-          this.log(`${player.name} passes GO and collects $${GO_SALARY}.`);
+          this.logEvent(`${player.name} passes GO and collects $${GO_SALARY}.`);
         }
         const move: MoveEvent = {
           playerId: player.id,
@@ -721,7 +769,7 @@ export class Game {
       return;
     }
     player.cash -= amount;
-    this.log(`${player.name} pays $${amount} for ${reason}.`);
+    this.logEvent(`${player.name} pays $${amount} for ${reason}.`);
   }
 
   private payPlayer(payer: PlayerState, payee: PlayerState, amount: number) {
@@ -760,7 +808,7 @@ export class Game {
     const value = this.mortgageValue(spaceIndex);
     record.mortgaged = true;
     player.cash += value;
-    this.log(`${player.name} mortgages ${BOARD[spaceIndex].name} for $${value}.`);
+    this.logEvent(`${player.name} mortgages ${BOARD[spaceIndex].name} for $${value}.`, "MORTGAGE");
   }
 
   private doUnmortgage(player: PlayerState, spaceIndex: number) {
@@ -768,7 +816,7 @@ export class Game {
     const cost = this.unmortgageCost(spaceIndex);
     record.mortgaged = false;
     player.cash -= cost;
-    this.log(`${player.name} pays off the mortgage on ${BOARD[spaceIndex].name} for $${cost}.`);
+    this.logEvent(`${player.name} pays off the mortgage on ${BOARD[spaceIndex].name} for $${cost}.`, "MORTGAGE");
   }
 
   /**
@@ -872,17 +920,21 @@ export class Game {
       record.houses = 4;
       this.state.housesRemaining -= 4;
       this.state.hotelsRemaining += 1;
-      this.log(`${player.name} sells the hotel on ${space.name} for $${saleValue}.`);
+      this.logEvent(`${player.name} sells the hotel on ${space.name} for $${saleValue}.`, "BUILD");
     } else {
       record.houses -= 1;
       this.state.housesRemaining += 1;
-      this.log(`${player.name} sells a house on ${space.name} (${record.houses}/4) for $${saleValue}.`);
+      this.logEvent(`${player.name} sells a house on ${space.name} (${record.houses}/4) for $${saleValue}.`, "BUILD");
     }
     player.cash += saleValue;
     return true;
   }
 
-  /** One trade proposal attempt per player per turn — no counter-offer negotiation. */
+  /** One trade proposal attempt per player per turn — no counter-offer negotiation. Logs the full
+   * proposal the moment it's made (not just the outcome), and restates those same terms in the
+   * decline line too (executeTrade already restates them on an accept) — the whole lifecycle of a
+   * trade reads from the log alone, without cross-referencing an earlier line to know what was
+   * actually on the table. */
   private runTradePhase(player: PlayerState) {
     if (player.bankrupt) return;
     const bot = this.bots.get(player.id)!;
@@ -892,9 +944,13 @@ export class Game {
     const counterparty = this.state.players.find((p) => p.id === offer.toPlayerId);
     if (!counterparty || counterparty.bankrupt) return;
 
+    const given = describeTradeSide(offer.offeredProperties, offer.offeredCash, offer.offeredGetOutOfJailFreeCards);
+    const received = describeTradeSide(offer.requestedProperties, offer.requestedCash, offer.requestedGetOutOfJailFreeCards);
+    this.logEvent(`${player.name} offers ${counterparty.name}: ${given} for ${received}.`, "TRADE");
+
     const counterpartyBot = this.bots.get(counterparty.id)!;
     if (!counterpartyBot.evaluateTrade(this.getSnapshot(), counterparty.id, offer)) {
-      this.log(`${player.name} offers a trade to ${counterparty.name}, which is declined.`);
+      this.logEvent(`${counterparty.name} declines the offer (${given} for ${received}).`, "TRADE");
       return;
     }
     this.executeTrade(player, counterparty, offer);
@@ -947,9 +1003,9 @@ export class Game {
 
     const given = describeTradeSide(offer.offeredProperties, offer.offeredCash, offer.offeredGetOutOfJailFreeCards);
     const received = describeTradeSide(offer.requestedProperties, offer.requestedCash, offer.requestedGetOutOfJailFreeCards);
-    this.log(`${from.name} trades ${given} to ${to.name} for ${received}.`);
+    this.logEvent(`${to.name} accepts. ${from.name} trades ${given} to ${to.name} for ${received}.`, "TRADE");
     for (const condition of offer.conditions) {
-      this.log(`Trade condition: ${describeTradeCondition(condition, this.state.players)}.`);
+      this.logEvent(`Trade condition: ${describeTradeCondition(condition, this.state.players)}.`, "TRADE");
     }
 
     // Checked once per distinct group touched (not per property) — a trade can move more than
@@ -969,11 +1025,11 @@ export class Game {
     const groupIndices = GROUP_MEMBERS[group];
     if (!groupIndices.every((i) => this.state.ownership[i].ownerId === player.id)) return;
     const label = group === "railroad" ? "all four railroads" : group === "utility" ? "both utilities" : `the ${group} monopoly`;
-    this.log(`${player.name} completes ${label}!`);
+    this.logEvent(`${player.name} completes ${label}!`);
   }
 
   private handleBankruptcy(player: PlayerState, creditor: PlayerState | null) {
-    this.log(`${player.name} cannot pay and is bankrupt${creditor ? ` (owed to ${creditor.name})` : ""}.`);
+    this.logEvent(`${player.name} cannot pay and is bankrupt${creditor ? ` (owed to ${creditor.name})` : ""}.`);
     player.bankrupt = true;
     const groupsTransferred = new Set<string>();
     for (const [indexStr, record] of Object.entries(this.state.ownership)) {
@@ -1009,7 +1065,7 @@ export class Game {
     const active = this.activePlayers();
     if (active.length === 1) {
       this.state.winnerId = active[0].id;
-      this.log(`${active[0].name} wins the game!`);
+      this.logEvent(`${active[0].name} wins the game!`);
     }
   }
 
@@ -1049,7 +1105,7 @@ export class Game {
       record.houses += 1;
       this.state.housesRemaining -= 1;
       player.cash -= space.houseCost;
-      this.log(`${player.name} builds a house on ${space.name} (${record.houses}/4).`);
+      this.logEvent(`${player.name} builds a house on ${space.name} (${record.houses}/4).`, "BUILD");
       return true;
     }
     if (this.state.hotelsRemaining <= 0 || player.cash < space.houseCost) return false;
@@ -1058,7 +1114,7 @@ export class Game {
     this.state.housesRemaining += 4;
     this.state.hotelsRemaining -= 1;
     player.cash -= space.houseCost;
-    this.log(`${player.name} builds a hotel on ${space.name}.`);
+    this.logEvent(`${player.name} builds a hotel on ${space.name}.`, "BUILD");
     return true;
   }
 }

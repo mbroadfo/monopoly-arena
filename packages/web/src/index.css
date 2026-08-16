@@ -943,6 +943,54 @@ body {
 
 .log-entry {
   color: #ccc;
+  white-space: pre-wrap;
+}
+
+.log-entry.log-round {
+  margin-top: 6px;
+  color: #fff;
+  font-weight: 700;
+  border-top: 1px solid #333;
+  padding-top: 6px;
+}
+
+.log-entry.log-round:first-child {
+  margin-top: 0;
+  border-top: none;
+  padding-top: 0;
+}
+
+.log-entry.log-turn {
+  color: #8fc4ff;
+  font-weight: 600;
+}
+
+.log-entry.log-tagged[data-tag="ROLL"] {
+  color: #b0b0b0;
+}
+
+.log-entry.log-tagged[data-tag="RENT"] {
+  color: #ff8a80;
+}
+
+.log-entry.log-tagged[data-tag="CARD"] {
+  color: #ffd54f;
+}
+
+.log-entry.log-tagged[data-tag="BUILD"] {
+  color: #81c784;
+}
+
+.log-entry.log-tagged[data-tag="MORTGAGE"] {
+  color: #ba68c8;
+}
+
+.log-entry.log-tagged[data-tag="TRADE"] {
+  color: #4fc3f7;
+}
+
+.log-entry.log-tagged[data-tag="JAIL"] {
+  color: #ff9e57;
 }
 
 /* Left nav: sized to match the board's height so both fit the viewport without scrolling

@@ -773,6 +773,191 @@ describe("Game", () => {
     expect(chanceDeck.cards.length + chanceDeck.discard.length).toBe(16); // back in circulation
   });
 
+  it("logs a Round 1 header before the very first turn, not just from the second round on", () => {
+    // Regression test: the round tracker's "has the acting seat wrapped back around" check used
+    // to seed its "last seen seat" sentinel at -1, which no real (>=0) seat index could ever be
+    // <=, so the very first turn silently never triggered the round-1 header at all — the log
+    // just jumped straight into "Round 0 · Player's turn" with no preceding "Round 0" header and
+    // the wrong number to boot. Fixed by seeding the sentinel at +Infinity instead.
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2; // every roll: d1=1, d2=2, total=3 (never a double)
+    };
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+    const a: Bot = { name: "A", ...passthrough };
+    const b: Bot = { name: "B", ...passthrough };
+    const game = new Game({ playerNames: ["A", "B"], bots: [a, b], rng: fixedRoll });
+    game.state.currentPlayerIndex = 0;
+
+    game.playTurn();
+
+    expect(game.state.log).toContain("Round 1");
+    expect(game.state.log).toContain("Round 1 · A's turn");
+    // The header comes before the turn marker, not after — reads as "entering round 1, and now
+    // it's A's turn within it," matching how every later round already reads.
+    expect(game.state.log.indexOf("Round 1")).toBeLessThan(game.state.log.indexOf("Round 1 · A's turn"));
+  });
+
+  it("starts a new round only once the table wraps back around, not every turn", () => {
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2;
+    };
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+    const a: Bot = { name: "A", ...passthrough };
+    const b: Bot = { name: "B", ...passthrough };
+    const game = new Game({ playerNames: ["A", "B"], bots: [a, b], rng: fixedRoll });
+    game.state.currentPlayerIndex = 0;
+
+    game.playTurn(); // A — round 1 starts here.
+    game.playTurn(); // B — still round 1, no new header.
+    game.playTurn(); // A again — the table has wrapped around, round 2 starts here.
+
+    expect(game.state.log.filter((l) => l === "Round 1").length).toBe(1);
+    expect(game.state.log.filter((l) => l === "Round 2").length).toBe(1);
+    expect(game.state.log).toContain("Round 1 · B's turn");
+    expect(game.state.log).toContain("Round 2 · A's turn");
+  });
+
+  it("indents in-turn events two spaces and tags a roll and a rent charge with their category", () => {
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2; // every roll: d1=1, d2=2, total=3
+    };
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+    const payer: Bot = { name: "Payer", ...passthrough };
+    const owner: Bot = { name: "Owner", ...passthrough };
+    const game = new Game({ playerNames: ["Payer", "Owner"], bots: [payer, owner], rng: fixedRoll });
+    game.state.currentPlayerIndex = 0;
+    game.state.ownership[39].ownerId = "p1"; // Owner owns Boardwalk — base rent $50
+    game.state.players[0].position = 36; // 36 + roll(3) = 39 (Boardwalk)
+
+    game.playTurn();
+
+    // Excludes the pre-game turn-order roll — it matches "Payer rolls" too, but isn't part of a
+    // turn at all (no round/turn marker precedes it), so it's untouched by this formatting.
+    const rollLine = game.state.log.find((l) => l.includes("Payer rolls") && !l.includes("turn order"));
+    const rentLine = game.state.log.find((l) => l.includes("rent for Boardwalk"));
+    expect(rollLine).toBe("  [ROLL] Payer rolls 1+2 (3).");
+    expect(rentLine).toBe("  [RENT] Payer owes Owner $50 rent for Boardwalk.");
+  });
+
+  it("marks a bonus roll from doubles with its own turn marker, distinct from the turn's initial roll", () => {
+    const passthrough = {
+      shouldBuyProperty: () => false,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseHouseToBuild: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      proposeTrade: () => null,
+      evaluateTrade: () => false,
+    };
+    const a: Bot = { name: "A", ...passthrough };
+    const b: Bot = { name: "B", ...passthrough };
+    const game = new Game({ playerNames: ["A", "B"], bots: [a, b], rng: mulberry32(1) });
+
+    let bonusMarkerFound = false;
+    for (let i = 0; i < 200 && !bonusMarkerFound; i++) {
+      game.playTurn();
+      bonusMarkerFound = game.state.log.some((l) => l.includes("(bonus roll — doubles)"));
+    }
+    expect(bonusMarkerFound).toBe(true);
+
+    // The bonus marker's own turn's *initial* marker (no suffix) must appear earlier in the log —
+    // proving the first roll of a doubles-chained turn doesn't also get the bonus suffix.
+    const bonusIndex = game.state.log.findIndex((l) => l.includes("(bonus roll — doubles)"));
+    const plainMarkerBefore = game.state.log.slice(0, bonusIndex).some((l) => /^Round \d+ · .+'s turn$/.test(l));
+    expect(plainMarkerBefore).toBe(true);
+  });
+
+  it("logs a trade's full proposal when offered, and restates the terms in both a decline and an accept", () => {
+    const BOARDWALK = 39;
+    const passthrough = {
+      chooseHouseToBuild: () => null,
+      shouldPayToLeaveJail: () => true,
+      raiseCash: () => null,
+      chooseFinanceAction: () => null,
+      auctionBid: () => null,
+      shouldBuyProperty: () => false,
+    };
+    let sellerAccepts = false;
+    const seller: Bot = { name: "Seller", ...passthrough, proposeTrade: () => null, evaluateTrade: () => sellerAccepts };
+    const buyer: Bot = {
+      name: "Buyer",
+      ...passthrough,
+      proposeTrade: (state, playerId) => {
+        if (state.ownership[BOARDWALK].ownerId !== "p0") return null;
+        return {
+          fromPlayerId: playerId,
+          toPlayerId: "p0",
+          offeredProperties: [],
+          offeredCash: 500,
+          offeredGetOutOfJailFreeCards: 0,
+          requestedProperties: [BOARDWALK],
+          requestedCash: 0,
+          requestedGetOutOfJailFreeCards: 0,
+          conditions: [],
+        };
+      },
+      evaluateTrade: () => false,
+    };
+
+    let call = 0;
+    const fixedRoll = () => {
+      call += 1;
+      return call % 2 === 1 ? 0 : 0.2; // every roll: d1=1, d2=2, total=3
+    };
+    const game = new Game({ playerNames: ["Seller", "Buyer"], bots: [seller, buyer], rng: fixedRoll });
+    game.state.currentPlayerIndex = 0;
+    game.state.ownership[BOARDWALK].ownerId = "p0";
+
+    game.playTurn(); // Seller.
+    sellerAccepts = false;
+    game.playTurn(); // Buyer proposes; Seller declines.
+
+    expect(game.state.log).toContain("  [TRADE] Buyer offers Seller: $500 for Boardwalk.");
+    expect(game.state.log).toContain("  [TRADE] Seller declines the offer ($500 for Boardwalk).");
+
+    sellerAccepts = true;
+    game.playTurn(); // Seller.
+    game.playTurn(); // Buyer proposes again; Seller accepts.
+
+    expect(game.state.log).toContain("  [TRADE] Buyer offers Seller: $500 for Boardwalk.");
+    expect(game.state.log).toContain("  [TRADE] Seller accepts. Buyer trades $500 to Seller for Boardwalk.");
+    expect(game.state.ownership[BOARDWALK].ownerId).toBe("p1");
+  });
+
   it("starts every player with $1500 and no properties owned", () => {
     const game = new Game({
       playerNames: ["Alice", "Bob"],

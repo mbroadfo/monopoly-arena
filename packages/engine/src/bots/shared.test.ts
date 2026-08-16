@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { baseState } from "../testFixtures.js";
-import { completesMonopolyFor, findMutualMonopolyTargets, maxOpponentRentThreat, maxRentThreat, percentPropertiesUnowned } from "./shared.js";
+import {
+  completesMonopolyFor,
+  findMutualMonopolyTargets,
+  maxOpponentRentThreat,
+  maxRentThreat,
+  percentPropertiesUnowned,
+  standingDesperation,
+} from "./shared.js";
 
 function owned(ownerId: string, overrides: { houses?: number; hotel?: boolean; mortgaged?: boolean } = {}) {
   return { ownerId, houses: overrides.houses ?? 0, hotel: overrides.hotel ?? false, mortgaged: overrides.mortgaged ?? false };
@@ -158,5 +165,36 @@ describe("findMutualMonopolyTargets", () => {
     state.ownership[MEDITERRANEAN] = owned("p0");
     state.ownership[BALTIC] = owned("p1");
     expect(findMutualMonopolyTargets(state, "p0", "p2", BALTIC)).toEqual([]);
+  });
+});
+
+describe("standingDesperation", () => {
+  it("is 0 for the leader (or when tied with everyone else)", () => {
+    const state = baseState();
+    state.players[0].cash = 1500;
+    state.players[1].cash = 1500;
+    expect(standingDesperation(state, "p0")).toBe(0);
+  });
+
+  it("scales up the further behind the current leader a player is", () => {
+    const state = baseState();
+    state.players[0].cash = 1500; // leader
+    state.players[1].cash = 750; // half the leader's net worth
+    expect(standingDesperation(state, "p1")).toBeCloseTo(0.5);
+    expect(standingDesperation(state, "p0")).toBe(0);
+  });
+
+  it("is 0 when only one active player remains", () => {
+    const state = baseState();
+    state.players[0].cash = 1500;
+    state.players[1].bankrupt = true;
+    expect(standingDesperation(state, "p0")).toBe(0);
+  });
+
+  it("is 0 rather than dividing by zero when nobody has any net worth yet", () => {
+    const state = baseState();
+    state.players[0].cash = 0;
+    state.players[1].cash = 0;
+    expect(standingDesperation(state, "p0")).toBe(0);
   });
 });

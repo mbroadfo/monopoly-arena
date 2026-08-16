@@ -5,11 +5,14 @@ import {
   findMonopolyCompletionTargets,
   findMutualMonopolyTargets,
   houseAuctionCeiling,
+  MAX_DESPERATION_DISCOUNT,
+  MAX_DESPERATION_SWEETENER,
   MONOPOLY_COMPLETION_PREMIUM,
   mortgageCandidates,
   ownedMortgaged,
   percentPropertiesUnowned,
   propertyValue,
+  standingDesperation,
   unmortgageCost,
 } from "./shared.js";
 
@@ -151,8 +154,9 @@ export function createOrangeRushBot(options: OrangeRushBotOptions = {}): Bot {
 
       const player = state.players.find((p) => p.id === playerId)!;
       const space = state.spaces[target.spaceIndex] as PropertySpace;
-      // More aggressive than a flat cash offer — matches its auction premium.
-      const cashOffer = Math.round(space.price * 1.7);
+      // More aggressive than a flat cash offer — matches its auction premium. Sweetens further
+      // the further behind it is, trying to actually get a deal done.
+      const cashOffer = Math.round(space.price * (1.7 + standingDesperation(state, playerId) * MAX_DESPERATION_SWEETENER));
       if (player.cash - cashOffer < PRIORITY_RESERVE) return null;
 
       return {
@@ -186,7 +190,10 @@ export function createOrangeRushBot(options: OrangeRushBotOptions = {}): Bot {
       const protectedByCondition = offer.conditions.some((c) => c.protectedPlayerId === playerId);
       const requestedPropsValue = propertyValue(state, offer.requestedProperties);
       const adjustedRequestedPropsValue = protectedByCondition ? requestedPropsValue * 0.7 : requestedPropsValue;
-      const giving = offer.requestedCash + adjustedRequestedPropsValue;
+      // The further behind the current leader, the more of that value it discounts away just to
+      // get a deal done — a losing player trying to change the board state, not hold out for fair.
+      const desperationDiscount = 1 - standingDesperation(state, playerId) * MAX_DESPERATION_DISCOUNT;
+      const giving = (offer.requestedCash + adjustedRequestedPropsValue) * desperationDiscount;
 
       const cashAfter = player.cash + offer.offeredCash - offer.requestedCash;
       return gaining >= giving && cashAfter >= reserve;

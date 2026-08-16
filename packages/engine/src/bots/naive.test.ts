@@ -87,6 +87,18 @@ describe("createNaiveBot proposeTrade", () => {
     expect(offer?.offeredCash).toBe(90); // 1.5x Baltic's $60 price
     expect(offer?.requestedProperties).toEqual([BALTIC]);
   });
+
+  it("sweetens its own cash offer the further behind the leader it is", () => {
+    const bot = createNaiveBot();
+    const state = baseState();
+    state.ownership[MEDITERRANEAN] = owned("p0");
+    state.ownership[BALTIC] = owned("p1");
+    state.players[0].cash = 1500; // worth 1560 (cash + Mediterranean)
+    state.players[1].cash = 100_000; // far ahead -> p0 is deep in desperation territory
+
+    const offer = bot.proposeTrade(state, "p0");
+    expect(offer?.offeredCash).toBeGreaterThan(90); // more than the baseline 1.5x Baltic's $60 price
+  });
 });
 
 const PACIFIC = 31; // green group (this bot's default preferredGroup) with North Carolina/Pennsylvania, price 300
@@ -139,6 +151,21 @@ describe("createNaiveBot evaluateTrade", () => {
     state.ownership[BALTIC] = owned("p0"); // this bot owns the missing piece being requested
 
     const offer = baseOffer({ offeredCash: 60, requestedProperties: [BALTIC] }); // Baltic's face price
+    expect(bot.evaluateTrade(state, "p0", offer)).toBe(true);
+  });
+
+  it("accepts a discounted premium for its home-turf monopoly-completing piece when far behind the leader", () => {
+    const bot = createNaiveBot();
+    const state = baseState();
+    state.ownership[PACIFIC] = owned("p1");
+    state.ownership[NORTH_CAROLINA] = owned("p1");
+    state.ownership[PENNSYLVANIA] = owned("p0");
+    state.players[0].cash = 0; // net worth 320 (just Pennsylvania)
+    state.players[1].cash = 100_000; // far ahead -> p0 is deep in desperation territory
+
+    // Full premium would be $480 (1.5x Pennsylvania's $320); $300 fails that bar but clears the
+    // desperation-discounted one.
+    const offer = baseOffer({ offeredCash: 300, requestedProperties: [PENNSYLVANIA] });
     expect(bot.evaluateTrade(state, "p0", offer)).toBe(true);
   });
 });

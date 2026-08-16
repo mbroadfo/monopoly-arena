@@ -1,6 +1,13 @@
 import { GROUP_MEMBERS } from "../board.js";
 import type { Bot, FinanceAction, GameState, Ownable, PropertySpace, TradeOffer } from "../types.js";
-import { houseAuctionCeiling, propertyValue } from "./shared.js";
+import {
+  completesMonopolyFor,
+  houseAuctionCeiling,
+  MAX_DESPERATION_DISCOUNT,
+  MONOPOLY_COMPLETION_PREMIUM,
+  propertyValue,
+  standingDesperation,
+} from "./shared.js";
 
 const MIN_CASH_BUFFER = 50;
 // No particular urgency here either — bids only up to face houseCost, matching its "buys whatever
@@ -79,11 +86,19 @@ export function createRandomBot(): Bot {
       // Stays passive here too — no deliberate trade strategy, matching everything else about it.
       return null;
     },
-    evaluateTrade(state: GameState, _playerId: string, offer: TradeOffer): boolean {
+    evaluateTrade(state: GameState, playerId: string, offer: TradeOffer): boolean {
       // Accepts anything that isn't a clear net loss — no reserve check, matching its
-      // existing reckless build behavior.
-      const gaining = offer.offeredCash + propertyValue(state, offer.offeredProperties);
-      const giving = offer.requestedCash + propertyValue(state, offer.requestedProperties);
+      // existing reckless build behavior. Does recognize when an offered property would complete
+      // its own monopoly, though — worth far more than face price, and missing that was a real
+      // blind spot: it would decline an outright great deal just because the face-value cash/
+      // property comparison looked lopsided. No matching defense on the giving side — still
+      // reckless about what it gives up, just not blind to what it's being handed.
+      const gainsMonopoly = offer.offeredProperties.some((i) => completesMonopolyFor(state, playerId, i, offer.fromPlayerId));
+      const gaining = offer.offeredCash + propertyValue(state, offer.offeredProperties) * (gainsMonopoly ? MONOPOLY_COMPLETION_PREMIUM : 1);
+      // The further behind the current leader, the more of that value it discounts away just to
+      // get a deal done — a losing player trying to change the board state, not hold out for fair.
+      const desperationDiscount = 1 - standingDesperation(state, playerId) * MAX_DESPERATION_DISCOUNT;
+      const giving = (offer.requestedCash + propertyValue(state, offer.requestedProperties)) * desperationDiscount;
       return gaining >= giving;
     },
   };

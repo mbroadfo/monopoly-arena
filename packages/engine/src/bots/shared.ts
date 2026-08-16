@@ -191,3 +191,52 @@ export function houseAuctionCeiling(state: GameState, spaceIndex: number, multip
   const closeness = 1 + record.houses / 4;
   return Math.round(space.houseCost * multiplier * closeness);
 }
+
+/** Up to this fraction off what a fully desperate player insists on receiving back in a trade. */
+export const MAX_DESPERATION_DISCOUNT = 0.4;
+/** Up to this much extra, as a fraction of a normal cash offer, a fully desperate proposer adds
+ * to sweeten its own offers — a losing player trying to actually get a deal done, not just a
+ * pickier one waiting for a better price. */
+export const MAX_DESPERATION_SWEETENER = 0.3;
+
+/**
+ * Cash + owned-property face value + development value (houses/hotels priced at what they cost
+ * to build) — a simpler, self-contained echo of `lookahead.ts`'s own `netWorth`, kept separate
+ * rather than imported: `lookahead.ts` already depends on this module transitively (it constructs
+ * a NaiveBot for rollout policy), so importing back from here would create a cycle. Precision
+ * doesn't matter here the way it does for NEAT's fitness signal — this only feeds
+ * `standingDesperation`'s *relative* ranking among active players.
+ */
+function estimatedNetWorth(state: GameState, playerId: string): number {
+  const player = state.players.find((p) => p.id === playerId);
+  if (!player) return 0;
+  const owned = Object.keys(state.ownership)
+    .map(Number)
+    .filter((i) => state.ownership[i].ownerId === playerId);
+  const developmentValue = owned.reduce((sum, i) => {
+    const space = state.spaces[i];
+    if (space.type !== "property") return sum;
+    const record = state.ownership[i];
+    const houseEquivalents = record.hotel ? 5 : record.houses;
+    return sum + houseEquivalents * space.houseCost;
+  }, 0);
+  return player.cash + propertyValue(state, owned) + developmentValue;
+}
+
+/**
+ * How far behind the game's current leader `playerId` is, in [0, 1] — 0 if they *are* the leader
+ * (by `estimatedNetWorth` among active players), approaching 1 the further behind they are. A
+ * behavioral nudge, not a precise metric: how much value a bot is willing to give up in a trade
+ * just to change the board state, the way a human who feels like they're losing starts making
+ * deals a comfortable leader never would — see the `MAX_DESPERATION_*` constants above for where
+ * this actually gets used.
+ */
+export function standingDesperation(state: GameState, playerId: string): number {
+  const active = state.players.filter((p) => !p.bankrupt);
+  if (active.length <= 1) return 0;
+  const worths = active.map((p) => estimatedNetWorth(state, p.id));
+  const leaderWorth = Math.max(...worths);
+  if (leaderWorth <= 0) return 0;
+  const myWorth = estimatedNetWorth(state, playerId);
+  return Math.max(0, Math.min(1, (leaderWorth - myWorth) / leaderWorth));
+}

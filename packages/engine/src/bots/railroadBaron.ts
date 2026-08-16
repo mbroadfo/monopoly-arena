@@ -4,10 +4,13 @@ import {
   completesMonopolyFor,
   findMutualMonopolyTargets,
   houseAuctionCeiling,
+  MAX_DESPERATION_DISCOUNT,
+  MAX_DESPERATION_SWEETENER,
   MONOPOLY_COMPLETION_PREMIUM,
   ownedMortgaged,
   percentPropertiesUnowned,
   propertyValue,
+  standingDesperation,
   unmortgageCost,
 } from "./shared.js";
 
@@ -143,8 +146,9 @@ export function createRailroadBaronBot(options: RailroadBaronBotOptions = {}): B
 
       const player = state.players.find((p) => p.id === playerId)!;
       const space = state.spaces[target.spaceIndex] as Ownable;
-      // Matches its auction ceiling for railroads/utilities.
-      const cashOffer = Math.round(space.price * 1.3);
+      // Matches its auction ceiling for railroads/utilities. Sweetens further the further behind
+      // it is, trying to actually get a deal done.
+      const cashOffer = Math.round(space.price * (1.3 + standingDesperation(state, playerId) * MAX_DESPERATION_SWEETENER));
       if (player.cash - cashOffer < reserve) return null;
 
       return {
@@ -178,7 +182,10 @@ export function createRailroadBaronBot(options: RailroadBaronBotOptions = {}): B
       const protectedByCondition = offer.conditions.some((c) => c.protectedPlayerId === playerId);
       const requestedPropsValue = propertyValue(state, offer.requestedProperties);
       const adjustedRequestedPropsValue = protectedByCondition ? requestedPropsValue * 0.7 : requestedPropsValue;
-      const giving = offer.requestedCash + adjustedRequestedPropsValue;
+      // The further behind the current leader, the more of that value it discounts away just to
+      // get a deal done — a losing player trying to change the board state, not hold out for fair.
+      const desperationDiscount = 1 - standingDesperation(state, playerId) * MAX_DESPERATION_DISCOUNT;
+      const giving = (offer.requestedCash + adjustedRequestedPropsValue) * desperationDiscount;
 
       const cashAfter = player.cash + offer.offeredCash - offer.requestedCash;
       return gaining >= giving && cashAfter >= reserve;

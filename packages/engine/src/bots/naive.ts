@@ -5,11 +5,14 @@ import {
   findMonopolyCompletionTargets,
   findMutualMonopolyTargets,
   houseAuctionCeiling,
+  MAX_DESPERATION_DISCOUNT,
+  MAX_DESPERATION_SWEETENER,
   MONOPOLY_COMPLETION_PREMIUM,
   mortgageCandidates,
   ownedMortgaged,
   percentPropertiesUnowned,
   propertyValue,
+  standingDesperation,
   unmortgageCost,
 } from "./shared.js";
 
@@ -151,7 +154,9 @@ export function createNaiveBot(options: NaiveBotOptions = {}): Bot {
 
       const player = state.players.find((p) => p.id === playerId)!;
       const space = state.spaces[target.spaceIndex] as PropertySpace;
-      const cashOffer = Math.round(space.price * 1.5);
+      // Sweetens its own offer the further behind it is — trying to actually get a deal done
+      // instead of waiting for a price a comfortable leader would hold out for.
+      const cashOffer = Math.round(space.price * (1.5 + standingDesperation(state, playerId) * MAX_DESPERATION_SWEETENER));
       if (player.cash - cashOffer < reserve) return null;
 
       return {
@@ -191,7 +196,11 @@ export function createNaiveBot(options: NaiveBotOptions = {}): Bot {
       const requestedPropsValue = propertyValue(state, offer.requestedProperties);
       const adjustedRequestedPropsValue =
         (protectedByCondition ? requestedPropsValue * 0.7 : requestedPropsValue) * (givesUpPreferredMonopoly ? MONOPOLY_COMPLETION_PREMIUM : 1);
-      const giving = offer.requestedCash + adjustedRequestedPropsValue;
+      // The further behind the current leader this bot is, the more of that value it's willing
+      // to discount away just to get a deal done and change the board state — a losing player
+      // acting like one, rather than holding out for a fair price it may never get offered.
+      const desperationDiscount = 1 - standingDesperation(state, playerId) * MAX_DESPERATION_DISCOUNT;
+      const giving = (offer.requestedCash + adjustedRequestedPropsValue) * desperationDiscount;
 
       const cashAfter = player.cash + offer.offeredCash - offer.requestedCash;
       return gaining >= giving && cashAfter >= reserve;

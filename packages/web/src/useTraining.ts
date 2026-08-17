@@ -132,7 +132,15 @@ function freshSession(): TrainingSession {
 /** Reconstructs a session from a previous run's saved state — `rng` restarts fresh from the same
  * `seedBase` (not a perfect resume of the exact prior random sequence, since a closure can't be
  * serialized, but a perfectly good one for continuing evolution forward) and the innovation
- * tracker's counters pick up exactly where they left off (see `InnovationTracker.snapshot()`). */
+ * tracker's counters pick up exactly where they left off (see `InnovationTracker.snapshot()`).
+ *
+ * The three champion fields fall back the same way `freshSession()` initializes them, rather than
+ * trusting `saved` to have them: a blob from before champion tracking existed (or any other
+ * partial/incompatible save) would otherwise leave `championFitness` as `undefined`, and
+ * `stats.bestFitness > undefined` is `false` in JS for *every* future generation — a resumed run
+ * would silently stop ever recording a new champion, no matter how high fitness climbed
+ * afterward, with nothing in the UI to explain why "Champion's network" stayed empty forever.
+ */
 function resumedSession(saved: PersistedTrainingSession): TrainingSession {
   return {
     population: saved.population,
@@ -141,10 +149,10 @@ function resumedSession(saved: PersistedTrainingSession): TrainingSession {
     rng: mulberry32(saved.seedBase),
     seedBase: saved.seedBase,
     gen: saved.gen,
-    championFitness: saved.championFitness,
-    champion: saved.champion,
-    championGeneration: saved.championGeneration,
-    history: saved.history,
+    championFitness: saved.championFitness ?? -Infinity,
+    champion: saved.champion ?? null,
+    championGeneration: saved.championGeneration ?? null,
+    history: saved.history ?? [],
   };
 }
 
